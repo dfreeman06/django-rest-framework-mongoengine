@@ -43,6 +43,8 @@ class MongoAPIView(GenericAPIView):
         for key, value in self.kwargs.items():
             if key in serializer.opts.model._fields and value is not None:
                 query_kwargs[key] = value
+            elif key == 'pk':  # transform pk to id
+                query_kwargs['id'] = value
         return query_kwargs
 
     def get_object(self, queryset=None):

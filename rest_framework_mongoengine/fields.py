@@ -2,6 +2,7 @@ from bson.errors import InvalidId
 from django.core.exceptions import ValidationError
 from django.utils.encoding import smart_str
 from mongoengine import dereference
+from mongoengine.base import get_document
 from mongoengine.base.document import BaseDocument
 from mongoengine.document import Document
 from rest_framework import serializers
@@ -74,14 +75,12 @@ class ReferenceField(MongoDocumentField):
             dbref = self.model_field.to_python(value)
         except InvalidId:
             raise ValidationError(self.error_messages['invalid'])
-
-        instance = dereference.DeReference().__call__([dbref])[0]
-
+        # instance = dereference.DeReference().__call__([dbref], instance=self.model_field.document_type)[0]
+        instance = get_document(dbref.collection).objects.get(id=dbref.id)
         # Check if dereference was successful
         if not isinstance(instance, Document):
             msg = self.error_messages['invalid']
             raise ValidationError(msg)
-
         return instance
 
     def to_native(self, obj):
