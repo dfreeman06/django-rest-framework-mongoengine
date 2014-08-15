@@ -6,6 +6,7 @@ from rest_framework import serializers
 from rest_framework import fields
 import mongoengine
 from mongoengine.base import BaseDocument
+from mongoengine.context_managers import no_dereference
 from django.core.paginator import Page
 from django.db import models
 from django.forms import widgets
@@ -13,8 +14,36 @@ from django.utils.datastructures import SortedDict
 from rest_framework.compat import get_concrete_model
 from .fields import ReferenceField, ListField, EmbeddedDocumentField, DynamicField
 from rest_framework.settings import api_settings
-from rest_framework.relations import HyperlinkedRelatedField, HyperlinkedIdentityField
+from rest_framework.relations import HyperlinkedRelatedField, HyperlinkedIdentityField, RelatedField
+from bson import DBRef
 
+field_mapping = {
+    mongoengine.FloatField: fields.FloatField,
+    mongoengine.IntField: fields.IntegerField,
+    mongoengine.DateTimeField: fields.DateTimeField,
+    mongoengine.EmailField: fields.EmailField,
+    mongoengine.URLField: fields.URLField,
+    mongoengine.StringField: fields.CharField,
+    mongoengine.BooleanField: fields.BooleanField,
+    mongoengine.FileField: fields.FileField,
+    mongoengine.ImageField: fields.ImageField,
+    mongoengine.ObjectIdField: fields.Field,
+    mongoengine.ReferenceField: ReferenceField,
+    mongoengine.ListField: ListField,
+    mongoengine.EmbeddedDocumentField: EmbeddedDocumentField,
+    mongoengine.DynamicField: DynamicField,
+    mongoengine.DecimalField: fields.DecimalField,
+    mongoengine.MapField: DynamicField,
+}
+
+attribute_dict = {
+    mongoengine.StringField: ['max_length'],
+    mongoengine.DecimalField: ['min_value', 'max_value'],
+    mongoengine.EmailField: ['max_length'],
+    mongoengine.FileField: ['max_length'],
+    mongoengine.ImageField: ['max_length'],
+    mongoengine.URLField: ['max_length'],
+}
 
 
 class MongoEngineModelSerializerOptions(serializers.ModelSerializerOptions):
@@ -23,7 +52,7 @@ class MongoEngineModelSerializerOptions(serializers.ModelSerializerOptions):
     """
     def __init__(self, meta):
         super(MongoEngineModelSerializerOptions, self).__init__(meta)
-        self.depth = getattr(meta, 'depth', 5)
+        self.depth = getattr(meta, 'depth', 10)
 
 
 class MongoEngineModelSerializer(serializers.ModelSerializer):
@@ -127,8 +156,8 @@ class MongoEngineModelSerializer(serializers.ModelSerializer):
     def get_field(self, model_field):
         kwargs = {}
 
-        if model_field.__class__ in (mongoengine.ReferenceField, mongoengine.EmbeddedDocumentField,
-                                     mongoengine.ListField, mongoengine.DynamicField):
+        if isinstance(model_field, (mongoengine.ReferenceField, mongoengine.EmbeddedDocumentField,
+                                     mongoengine.ListField, mongoengine.DynamicField, mongoengine.DictField)):
             kwargs['model_field'] = model_field
             kwargs['depth'] = self.opts.depth
 
@@ -144,33 +173,6 @@ class MongoEngineModelSerializer(serializers.ModelSerializer):
 
         if model_field.__class__ == models.TextField:
             kwargs['widget'] = widgets.Textarea
-
-        field_mapping = {
-            mongoengine.FloatField: fields.FloatField,
-            mongoengine.IntField: fields.IntegerField,
-            mongoengine.DateTimeField: fields.DateTimeField,
-            mongoengine.EmailField: fields.EmailField,
-            mongoengine.URLField: fields.URLField,
-            mongoengine.StringField: fields.CharField,
-            mongoengine.BooleanField: fields.BooleanField,
-            mongoengine.FileField: fields.FileField,
-            mongoengine.ImageField: fields.ImageField,
-            mongoengine.ObjectIdField: fields.Field,
-            mongoengine.ReferenceField: ReferenceField,
-            mongoengine.ListField: ListField,
-            mongoengine.EmbeddedDocumentField: EmbeddedDocumentField,
-            mongoengine.DynamicField: DynamicField,
-            mongoengine.DecimalField: fields.DecimalField
-        }
-
-        attribute_dict = {
-            mongoengine.StringField: ['max_length'],
-            mongoengine.DecimalField: ['min_value', 'max_value'],
-            mongoengine.EmailField: ['max_length'],
-            mongoengine.FileField: ['max_length'],
-            mongoengine.ImageField: ['max_length'],
-            mongoengine.URLField: ['max_length'],
-        }
 
         if model_field.__class__ in attribute_dict:
             attributes = attribute_dict[model_field.__class__]
@@ -258,7 +260,21 @@ class HyperlinkedModelSerializerOptions(MongoEngineModelSerializerOptions):
         super(HyperlinkedModelSerializerOptions, self).__init__(meta)
         self.view_name = getattr(meta, 'view_name', None)
         self.lookup_field = getattr(meta, 'lookup_field', None)
-        self.url_field_name = getattr(meta, 'url_field_name', api_settings.URL_FIELD_NAME)
+        self.url_field_name = getattr(meta, 'url_field_name', api_settings.URL_FIELD_NAME)  # todo change back to id for json-ld
+
+
+class MongoEngineHyperlinkedIdentityField(HyperlinkedIdentityField):
+    lookup_field = 'id'
+
+
+class MongoHyperlinkedRelatedField(HyperlinkedRelatedField):
+    lookup_field = 'id'
+    def initialize(self, parent, field_name):
+        super(RelatedField, self).initialize(parent, field_name)
+        if self.queryset is None and not self.read_only:
+            manager = getattr(self.parent.opts.model, self.source or field_name)
+            self.queryset = manager.document_type.objects.all()
+
 
 class HyperlinkedModelSerializer(MongoEngineModelSerializer):
     """
@@ -267,8 +283,8 @@ class HyperlinkedModelSerializer(MongoEngineModelSerializer):
     """
     _options_class = HyperlinkedModelSerializerOptions
     _default_view_name = '%(model_name)s-detail'
-    _hyperlink_field_class = HyperlinkedRelatedField
-    _hyperlink_identify_field_class = HyperlinkedIdentityField
+    _hyperlink_field_class = MongoHyperlinkedRelatedField
+    _hyperlink_identify_field_class = MongoEngineHyperlinkedIdentityField
 
     def get_default_fields(self):
         fields = super(HyperlinkedModelSerializer, self).get_default_fields()
@@ -336,3 +352,68 @@ class HyperlinkedModelSerializer(MongoEngineModelSerializer):
             'model_name': model_meta['collection'].lower()
         }
         return self._default_view_name % format_kwargs
+
+    @property
+    def data(self):
+        """
+        Returns the serialized data on the serializer.
+        """
+        if self._data is None:
+            if hasattr(self.object, 'no_dereference'):
+                obj = self.object.no_dereference()
+            else:
+                obj = self.object
+
+            if self.many is not None:
+                many = self.many
+            else:
+                many = hasattr(obj, '__iter__') and not isinstance(obj, (BaseDocument, Page, dict))
+                if many:
+                    warnings.warn('Implicit list/queryset serialization is deprecated. '
+                                  'Use the `many=True` flag when instantiating the serializer.',
+                                  DeprecationWarning, stacklevel=2)
+
+            if many:
+                self._data = [self.to_native(item) for item in obj]
+            else:
+                self._data = self.to_native(obj)
+
+        return self._data
+
+    def to_native(self, obj):
+        """
+        Rest framework built-in to_native + transform_object
+        """
+        # with no_dereference(obj.__class__)
+
+        ret = self._dict_class()
+        ret.fields = self._dict_class()
+
+        #Dynamic Document Support
+        dynamic_fields = self.get_dynamic_fields(obj)
+        all_fields = dict(dynamic_fields, **self.fields)
+
+        for field_name, field in all_fields.items():
+            if field.read_only and obj is None:
+                continue
+            field.initialize(parent=self, field_name=field_name)
+            key = self.get_field_key(field_name)
+            if isinstance(field, ReferenceField):
+                # detail_view_name = self._get_default_view_name(field.model_field.document_type)
+                # field2 = MongoHyperlinkedRelatedField(view_name=detail_view_name)
+                # field2.initialize(parent=self, field_name=field_name)
+                # value = field2.field_to_native(obj, field_name)
+                value = field.field_to_native(obj, field_name)
+                pass
+
+            else:
+                value = field.field_to_native(obj, field_name)
+            #Override value with transform_ methods
+            method = getattr(self, 'transform_%s' % field_name, None)
+            if callable(method):
+                value = method(obj, value)
+            if not getattr(field, 'write_only', False):
+                ret[key] = value
+            ret.fields[key] = self.augment_field(field, field_name, key, value)
+
+        return ret

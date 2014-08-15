@@ -10,6 +10,8 @@ class MongoAPIView(GenericAPIView):
     """
     queryset = None
     serializer_class = None
+    lookup_field = 'id'
+    _auto_dereference = True
 
     def get_queryset(self):
         """
@@ -22,13 +24,21 @@ class MongoAPIView(GenericAPIView):
 
         (Eg. return a list of items that is specific to the user)
         """
+        queryset = None
         if self.queryset is not None:
-            return self.queryset.clone()
+            queryset = self.queryset.clone()
 
         if self.model is not None:
-            return self.get_serializer().opts.model.objects.all()
-
-        raise ImproperlyConfigured("'%s' must define 'queryset' or 'model'"
+            if not self._auto_dereference:
+                queryset = self.get_serializer().opts.model.objects.no_dereference()
+            else:
+                queryset = self.get_serializer().opts.model.objects
+        if queryset:
+            # if not self._auto_dereference:
+            #     queryset.no_dereference()
+            return queryset
+        else:
+            raise ImproperlyConfigured("'%s' must define 'queryset' or 'model'"
                                     % self.__class__.__name__)
 
     def get_query_kwargs(self):
@@ -43,8 +53,6 @@ class MongoAPIView(GenericAPIView):
         for key, value in self.kwargs.items():
             if key in serializer.opts.model._fields and value is not None:
                 query_kwargs[key] = value
-            elif key == 'pk':  # transform pk to id
-                query_kwargs['id'] = value
         return query_kwargs
 
     def get_object(self, queryset=None):
