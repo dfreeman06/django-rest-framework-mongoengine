@@ -39,7 +39,7 @@ class MongoDocumentField(serializers.WritableField):
                 # finally check for an attribute 'field' on the instance
                 obj = getattr(document, name)
                 if obj and isinstance(field, fields.ReferenceField) and not self.HYPERLINK:
-                    obj = self.uri_or_obj(obj, field.document_type, depth-1)
+                    obj = self.uri_or_obj(obj, depth-1, field.document_type)
             else:
                 continue
 
@@ -62,7 +62,7 @@ class MongoDocumentField(serializers.WritableField):
         if depth == 0:
             return "Max recursion depth exceeded"
         elif isinstance(obj, DBRef):
-            return self.uri_or_obj(obj, self.model_field.document_type, depth-1)
+            return self.uri_or_obj(obj, depth-1)
         elif isinstance(obj, BaseDocument):
             # Document, EmbeddedDocument
             return self.transform_document(obj, depth-1)
@@ -76,8 +76,9 @@ class MongoDocumentField(serializers.WritableField):
             # Default to string
             return unicode(obj)
 
-    def uri_or_obj(self, obj, document_type, depth):
+    def uri_or_obj(self, obj, depth, doc_type=None):
         try:
+            document_type = doc_type or self.document_type()
             lookup_field = self.context['view'].lookup_field
             kwargs = {lookup_field: str(obj.id)}
 
@@ -92,6 +93,10 @@ class MongoDocumentField(serializers.WritableField):
                 return self.transform_object(document_type.objects.get(id=obj.id), depth)
             except DoesNotExist:
                 pass
+
+    def document_type(self):
+        return self.model_field.document_type
+
 
 
 class ReferenceField(MongoDocumentField):
@@ -113,38 +118,6 @@ class ReferenceField(MongoDocumentField):
     def to_native(self, obj):
         return self.transform_object(obj, self.depth)
 
-    # def field_to_native(self, obj, field_name):
-    #     ret = super(ReferenceField, self).field_to_native(obj, field_name)
-    #     return ret
-
-    # def to_native(self, obj):
-    #     # self.context
-    #     if isinstance(obj, DBRef):
-    #         ret =self.uri_or_obj(obj, self.model_field.document_type)
-    #         if ret:
-    #             return ret
-    #         # try:
-    #         #     lookup_field = self.context['view'].lookup_field
-    #         #     kwargs = {lookup_field: str(obj.id)}
-    #         #
-    #         #     # view_name = self.view_name
-    #         #     request = self.context.get('request', None)
-    #         #     format = self.context.get('format', None)
-    #         #
-    #         #     view_name = self.parent._get_default_view_name(self.model_field.document_type)
-    #         #     ret = reverse(view_name, kwargs=kwargs, request=request, format=format)
-    #         #     # ret = super(ReferenceField, self).to_native(obj)
-    #         #     return ret
-    #         # except NoReverseMatch:
-    #         #     pass
-    #     # ret = super(ReferenceField, self).to_native(value)
-    #     ret = self.transform_object(obj, self.depth)
-    #     return ret
-
-
-
-
-
 
 class ListField(MongoDocumentField):
 
@@ -155,6 +128,10 @@ class ListField(MongoDocumentField):
 
     def to_native(self, obj):
         return self.transform_object(obj, self.depth)
+
+    def document_type(self):
+        return self.model_field.field.document_type
+
 
 
 class EmbeddedDocumentField(MongoDocumentField):
@@ -174,9 +151,7 @@ class EmbeddedDocumentField(MongoDocumentField):
 
     def to_native(self, obj):
         return self.transform_object(obj, self.depth)
-        # value = self.model_field.to_mongo(obj)
-        # if value:
-        #     return value.to_dict()
+
 
     def from_native(self, obj):
         return self.model_field.to_python(obj)
@@ -188,3 +163,11 @@ class DynamicField(MongoDocumentField):
 
     def to_native(self, obj):
         return self.transform_object(obj, self.depth)
+
+
+class MapField(DynamicField):
+
+    type_label = 'MapField'
+
+    def document_type(self):
+        return self.model_field.field.document_type

@@ -12,7 +12,7 @@ from django.db import models
 from django.forms import widgets
 from django.utils.datastructures import SortedDict
 from rest_framework.compat import get_concrete_model
-from .fields import ReferenceField, ListField, EmbeddedDocumentField, DynamicField
+from .fields import ReferenceField, ListField, EmbeddedDocumentField, DynamicField, MapField
 from rest_framework.settings import api_settings
 from rest_framework.relations import HyperlinkedRelatedField, HyperlinkedIdentityField, RelatedField
 from bson import DBRef
@@ -33,7 +33,8 @@ field_mapping = {
     mongoengine.EmbeddedDocumentField: EmbeddedDocumentField,
     mongoengine.DynamicField: DynamicField,
     mongoengine.DecimalField: fields.DecimalField,
-    mongoengine.MapField: DynamicField,
+    mongoengine.MapField: MapField,
+    mongoengine.DictField: DynamicField,
 }
 
 attribute_dict = {
