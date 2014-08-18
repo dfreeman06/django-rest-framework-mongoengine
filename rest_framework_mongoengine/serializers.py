@@ -399,16 +399,7 @@ class HyperlinkedModelSerializer(MongoEngineModelSerializer):
                 continue
             field.initialize(parent=self, field_name=field_name)
             key = self.get_field_key(field_name)
-            if isinstance(field, ReferenceField):
-                # detail_view_name = self._get_default_view_name(field.model_field.document_type)
-                # field2 = MongoHyperlinkedRelatedField(view_name=detail_view_name)
-                # field2.initialize(parent=self, field_name=field_name)
-                # value = field2.field_to_native(obj, field_name)
-                value = field.field_to_native(obj, field_name)
-                pass
-
-            else:
-                value = field.field_to_native(obj, field_name)
+            value = field.field_to_native(obj, field_name)
             #Override value with transform_ methods
             method = getattr(self, 'transform_%s' % field_name, None)
             if callable(method):
