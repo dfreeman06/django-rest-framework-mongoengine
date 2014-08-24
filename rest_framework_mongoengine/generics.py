@@ -1,6 +1,7 @@
 from django.core.exceptions import ImproperlyConfigured
 from rest_framework import mixins
 from rest_framework.generics import GenericAPIView
+from mongoengine.django.shortcuts import get_document_or_404
 
 
 class MongoAPIView(GenericAPIView):
@@ -41,26 +42,18 @@ class MongoAPIView(GenericAPIView):
             raise ImproperlyConfigured("'%s' must define 'queryset' or 'model'"
                                     % self.__class__.__name__)
 
-    def get_query_kwargs(self):
-        """
-        Return a dict of kwargs that will be used to build the
-        document instance retrieval or to filter querysets.
-        """
-        query_kwargs = {}
-
-        serializer = self.get_serializer()
-
-        for key, value in self.kwargs.items():
-            if key in serializer.opts.model._fields and value is not None:
-                query_kwargs[key] = value
-        return query_kwargs
-
     def get_object(self, queryset=None):
         """
         Get a document instance for read/update/delete requests.
         """
-        query_kwargs = self.get_query_kwargs()
-        return self.get_queryset().get(**query_kwargs)
+        query_key = self.lookup_url_kwarg or self.lookup_field
+        query_kwargs = {query_key: self.kwargs[query_key]}
+        queryset = self.get_queryset()
+
+        obj = get_document_or_404(queryset, **query_kwargs)
+        self.check_object_permissions(self.request, obj)
+
+        return obj
 
 
 class CreateAPIView(mixins.CreateModelMixin,
