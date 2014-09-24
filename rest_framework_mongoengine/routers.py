@@ -1,3 +1,6 @@
+from rest_framework.routers import SimpleRouter, DefaultRouter
+
+
 class MongoRouterMixin(object):
     def get_default_base_name(self, viewset):
         """
@@ -11,6 +14,13 @@ class MongoRouterMixin(object):
 
         assert model_cls, '`base_name` argument not specified, and could ' \
             'not automatically determine the name from the viewset, as ' \
-            'it does not have a `.model` or `.queryset` attribute.'
-
+            'it does not have a `.model` attribute.'
         return model_cls.__name__.lower()
+
+
+class MongoSimpleRouter(MongoRouterMixin, SimpleRouter):
+    pass
+
+
+class MongoDefaultRouter(MongoSimpleRouter, DefaultRouter):
+    pass

@@ -8,6 +8,8 @@ from mongoengine.base.document import BaseDocument
 from mongoengine.document import Document
 from mongoengine import fields
 from rest_framework import serializers
+from mongoengine.fields import ObjectId
+
 import sys
 from bson import DBRef
 from rest_framework.reverse import reverse
@@ -16,6 +18,7 @@ from django.core.urlresolvers import resolve, get_script_prefix, NoReverseMatch
 if sys.version_info[0] >= 3:
     def unicode(val):
         return str(val)
+
 
 class MongoDocumentField(serializers.WritableField):
     MAX_RECURSION_DEPTH = 5  # default value of depth
@@ -60,7 +63,8 @@ class MongoDocumentField(serializers.WritableField):
         Recursion for (embedded) objects
         """
         if depth == 0:
-            return "Max recursion depth exceeded"
+            # Return primary key if exists, else return default text
+            return str(getattr(obj, 'pk', "Max recursion depth exceeded"))
         elif isinstance(obj, DBRef):
             return self.uri_or_obj(obj, depth-1)
         elif isinstance(obj, BaseDocument):
@@ -72,9 +76,10 @@ class MongoDocumentField(serializers.WritableField):
         elif isinstance(obj, list):
             # List
             return [self.transform_object(value, depth-1) for value in obj]
+        elif obj is None:
+            return None
         else:
-            # Default to string
-            return unicode(obj)
+            return unicode(obj) if isinstance(obj, ObjectId) else obj
 
     def uri_or_obj(self, obj, depth, doc_type=None):
         try:
@@ -133,7 +138,6 @@ class ListField(MongoDocumentField):
         return self.model_field.field.document_type
 
 
-
 class EmbeddedDocumentField(MongoDocumentField):
 
     type_label = 'EmbeddedDocumentField'
@@ -150,11 +154,13 @@ class EmbeddedDocumentField(MongoDocumentField):
         return self.to_native(self.default())
 
     def to_native(self, obj):
-        return self.transform_object(obj, self.depth)
+        if obj is None:
+            return None
+        else:
+            return self.transform_object(obj, self.depth)
 
-
-    def from_native(self, obj):
-        return self.model_field.to_python(obj)
+    def from_native(self, value):
+        return self.model_field.to_python(value)
 
 
 class DynamicField(MongoDocumentField):
