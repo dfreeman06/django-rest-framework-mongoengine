@@ -15,6 +15,7 @@ from bson import DBRef
 from rest_framework.reverse import reverse
 from django.core.urlresolvers import resolve, get_script_prefix, NoReverseMatch
 
+
 if sys.version_info[0] >= 3:
     def unicode(val):
         return str(val)
