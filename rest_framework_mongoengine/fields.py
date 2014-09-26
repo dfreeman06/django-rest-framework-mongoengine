@@ -2,6 +2,7 @@ from bson.errors import InvalidId
 from django.core.exceptions import ValidationError
 from django.utils.encoding import smart_str
 from mongoengine import dereference
+from mongoengine import ReferenceField as RefField
 from mongoengine.base import get_document
 from mongoengine.errors import DoesNotExist
 from mongoengine.base.document import BaseDocument
@@ -58,16 +59,21 @@ class MongoDocumentField(serializers.WritableField):
         return dict([(key, self.transform_object(val, depth-1))
                      for key, val in obj.items()])
 
-    def transform_object(self, obj, depth):
+    def transform_object(self, obj, depth, field=None):
         """
         Models to natives
         Recursion for (embedded) objects
         """
-        if depth == 0:
+        if field is None:
+            field = getattr(self, 'model_field', None)
+        print 'field', field, field.name
+        if obj is None:
+            return None
+        elif isinstance(obj, DBRef) or isinstance(field, RefField):
+            return self.uri_or_obj(obj, depth-1)
+        elif depth <= 0:
             # Return primary key if exists, else return default text
             return str(getattr(obj, 'pk', "Max recursion depth exceeded"))
-        elif isinstance(obj, DBRef):
-            return self.uri_or_obj(obj, depth-1)
         elif isinstance(obj, BaseDocument):
             # Document, EmbeddedDocument
             return self.transform_document(obj, depth-1)
@@ -76,16 +82,18 @@ class MongoDocumentField(serializers.WritableField):
             return self.transform_dict(obj, depth-1)
         elif isinstance(obj, list):
             # List
-            return [self.transform_object(value, depth-1) for value in obj]
-        elif obj is None:
-            return None
+            field = getattr(field, 'field', field)
+            return [self.transform_object(value, depth-1, field) for value in obj]
         else:
             return unicode(obj) if isinstance(obj, ObjectId) else obj
 
     def uri_or_obj(self, obj, depth, doc_type=None):
+        if obj is None:
+            return None
         try:
             document_type = doc_type or self.document_type()
-            lookup_field = self.context['view'].lookup_field
+            view = self.context.get('view', None)
+            lookup_field = view.lookup_field if view else 'id'
             kwargs = {lookup_field: str(obj.id)}
 
             # view_name = self.view_name
