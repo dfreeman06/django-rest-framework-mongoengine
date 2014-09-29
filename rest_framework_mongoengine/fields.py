@@ -110,6 +110,10 @@ class MongoDocumentField(serializers.WritableField):
     def document_type(self):
         return self.model_field.document_type
 
+    def to_native(self, value):
+        if value is not None:
+            return self.model_field.to_mongo(value)
+        # self.model_field.to_mongo()
 
 
 class ReferenceField(MongoDocumentField):
@@ -128,8 +132,8 @@ class ReferenceField(MongoDocumentField):
             raise ValidationError(msg)
         return instance
 
-    def to_native(self, obj):
-        return self.transform_object(obj, self.depth)
+    # def to_native(self, obj):
+    #     return self.transform_object(obj, self.depth)
 
 
 class ListField(MongoDocumentField):
@@ -139,8 +143,8 @@ class ListField(MongoDocumentField):
     def from_native(self, value):
         return self.model_field.to_python(value)
 
-    def to_native(self, obj):
-        return self.transform_object(obj, self.depth)
+    # def to_native(self, obj):
+    #     return self.transform_object(obj, self.depth)
 
     def document_type(self):
         return self.model_field.field.document_type
@@ -161,11 +165,11 @@ class EmbeddedDocumentField(MongoDocumentField):
     def get_default_value(self):
         return self.to_native(self.default())
 
-    def to_native(self, obj):
-        if obj is None:
-            return None
-        else:
-            return self.transform_object(obj, self.depth)
+    # def to_native(self, obj):
+    #     if obj is None:
+    #         return None
+    #     else:
+    #         return self.transform_object(obj, self.depth)
 
     def from_native(self, value):
         return self.model_field.to_python(value)
@@ -175,13 +179,13 @@ class DynamicField(MongoDocumentField):
 
     type_label = 'DynamicField'
 
-    def to_native(self, obj):
-        return self.transform_object(obj, self.depth)
+    # def to_native(self, obj):
+    #     return self.transform_object(obj, self.depth)
 
 
 class MapField(DynamicField):
 
     type_label = 'MapField'
 
-    def document_type(self):
-        return self.model_field.field.document_type
+    # def document_type(self):
+    #     return self.model_field.field.document_type
