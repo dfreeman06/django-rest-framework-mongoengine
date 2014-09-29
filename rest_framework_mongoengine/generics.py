@@ -25,22 +25,24 @@ class MongoAPIView(GenericAPIView):
 
         (Eg. return a list of items that is specific to the user)
         """
+        if self.queryset is None and self.model is None:
+            raise ImproperlyConfigured("'%s' must define 'queryset' or 'model'"
+                                    % self.__class__.__name__)
+
         queryset = None
         if self.queryset is not None:
             queryset = self.queryset.clone()
 
         if self.model is not None:
-            if not self._auto_dereference:
-                queryset = self.get_serializer().opts.model.objects.no_dereference()
-            else:
+            if self._auto_dereference:
                 queryset = self.get_serializer().opts.model.objects
+            else:
+                queryset = self.get_serializer().opts.model.objects.no_dereference()
         if queryset:
             # if not self._auto_dereference:
             #     queryset.no_dereference()
             return queryset
-        else:
-            raise ImproperlyConfigured("'%s' must define 'queryset' or 'model'"
-                                    % self.__class__.__name__)
+        return []
 
     def get_query_kwargs(self):
         """

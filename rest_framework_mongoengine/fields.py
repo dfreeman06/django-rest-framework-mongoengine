@@ -66,7 +66,6 @@ class MongoDocumentField(serializers.WritableField):
         """
         if field is None:
             field = getattr(self, 'model_field', None)
-        print 'field', field, field.name
         if obj is None:
             return None
         elif isinstance(obj, DBRef) or isinstance(field, RefField):
