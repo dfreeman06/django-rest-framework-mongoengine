@@ -16,6 +16,7 @@ from .fields import ReferenceField, ListField, EmbeddedDocumentField, DynamicFie
 from rest_framework.settings import api_settings
 from rest_framework.relations import HyperlinkedRelatedField, HyperlinkedIdentityField, RelatedField
 from bson import DBRef
+from .ld import Namespaced
 
 field_mapping = {
     mongoengine.FloatField: fields.FloatField,
@@ -198,20 +199,20 @@ class MongoEngineModelSerializer(serializers.ModelSerializer):
         all_fields = self._dict_class()
         all_fields.update(self.fields)
         all_fields.update(dynamic_fields)
-
-        for field_name, field in all_fields.items():
-            if field.read_only and obj is None:
-                continue
-            field.initialize(parent=self, field_name=field_name)
-            key = self.get_field_key(field_name)
-            value = field.field_to_native(obj, field_name)
-            #Override value with transform_ methods
-            method = getattr(self, 'transform_%s' % field_name, None)
-            if callable(method):
-                value = method(obj, value)
-            if not getattr(field, 'write_only', False):
-                ret[key] = value
-            ret.fields[key] = self.augment_field(field, field_name, key, value)
+        with Namespaced():
+            for field_name, field in all_fields.items():
+                if field.read_only and obj is None:
+                    continue
+                field.initialize(parent=self, field_name=field_name)
+                key = self.get_field_key(field_name)
+                value = field.field_to_native(obj, field_name)
+                #Override value with transform_ methods
+                method = getattr(self, 'transform_%s' % field_name, None)
+                if callable(method):
+                    value = method(obj, value)
+                if not getattr(field, 'write_only', False):
+                    ret[key] = value
+                ret.fields[key] = self.augment_field(field, field_name, key, value)
 
         return ret
 
@@ -384,31 +385,52 @@ class HyperlinkedModelSerializer(MongoEngineModelSerializer):
 
         return self._data
 
-    def to_native(self, obj):
-        """
-        Rest framework built-in to_native + transform_object
-        """
-        # with no_dereference(obj.__class__)
+    # def to_native(self, obj):
+    #     """
+    #     Rest framework built-in to_native + transform_object
+    #     """
+    #     # with no_dereference(obj.__class__)
+    #
+    #     ret = self._dict_class()
+    #     ret.fields = self._dict_class()
+    #
+    #     #Dynamic Document Support
+    #     dynamic_fields = self.get_dynamic_fields(obj)
+    #     all_fields = dict(dynamic_fields, **self.fields)
+    #
+    #     for field_name, field in all_fields.items():
+    #         if field.read_only and obj is None:
+    #             continue
+    #         field.initialize(parent=self, field_name=field_name)
+    #         key = self.get_field_key(field_name)
+    #         value = field.field_to_native(obj, field_name)
+    #         #Override value with transform_ methods
+    #         method = getattr(self, 'transform_%s' % field_name, None)
+    #         if callable(method):
+    #             value = method(obj, value)
+    #         if not getattr(field, 'write_only', False):
+    #             ret[key] = value
+    #         ret.fields[key] = self.augment_field(field, field_name, key, value)
+    #
+    #     return ret
 
-        ret = self._dict_class()
-        ret.fields = self._dict_class()
+def uri_or_obj(self, obj, depth, doc_type=None):
+    if obj is None:
+        return None
+    try:
+        document_type = doc_type or self.document_type()
+        view = self.context.get('view', None)
+        lookup_field = view.lookup_field if view else 'id'
+        kwargs = {lookup_field: str(obj.id)}
 
-        #Dynamic Document Support
-        dynamic_fields = self.get_dynamic_fields(obj)
-        all_fields = dict(dynamic_fields, **self.fields)
+        # view_name = self.view_name
+        request = self.context.get('request', None)
+        format = self.context.get('format', None)
 
-        for field_name, field in all_fields.items():
-            if field.read_only and obj is None:
-                continue
-            field.initialize(parent=self, field_name=field_name)
-            key = self.get_field_key(field_name)
-            value = field.field_to_native(obj, field_name)
-            #Override value with transform_ methods
-            method = getattr(self, 'transform_%s' % field_name, None)
-            if callable(method):
-                value = method(obj, value)
-            if not getattr(field, 'write_only', False):
-                ret[key] = value
-            ret.fields[key] = self.augment_field(field, field_name, key, value)
-
-        return ret
+        view_name = self.parent._get_default_view_name(document_type)
+        return reverse(view_name, kwargs=kwargs, request=request, format=format)
+    except NoReverseMatch:
+        try:
+            return self.transform_object(document_type.objects.get(id=obj.id), depth)
+        except DoesNotExist:
+            pass

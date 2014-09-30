@@ -10,6 +10,7 @@ from mongoengine.document import Document
 from mongoengine import fields
 from rest_framework import serializers
 from mongoengine.fields import ObjectId
+from bson import json_util
 
 import sys
 from bson import DBRef
@@ -112,7 +113,7 @@ class MongoDocumentField(serializers.WritableField):
 
     def to_native(self, value):
         if value is not None:
-            return self.model_field.to_mongo(value)
+            return json_util._json_convert(self.model_field.to_mongo(value))
         # self.model_field.to_mongo()
 
 
