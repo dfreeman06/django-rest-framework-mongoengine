@@ -1,4 +1,4 @@
-from mongoengine.fields import ReferenceField
+from mongoengine.fields import ReferenceField, ObjectIdField
 
 RESOLVE_URI = False
 
@@ -31,9 +31,14 @@ def ref_to_mongo(func):
         if not RESOLVE_URI:
             return id
         else:
-            return NAMESPACE(self.document_type._class_name, id)
+            try:
+                doc_type = self.document_type._class_name
+            except AttributeError:
+                doc_type = self.name
+            return NAMESPACE(doc_type, id)
 
     return to_mongo
 
 
 ReferenceField.to_mongo = ref_to_mongo(ReferenceField.to_mongo)
+ObjectIdField.to_mongo = ref_to_mongo(ObjectIdField.to_mongo)
