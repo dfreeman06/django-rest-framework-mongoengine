@@ -16,6 +16,7 @@ import sys
 from bson import DBRef
 from rest_framework.reverse import reverse
 from django.core.urlresolvers import resolve, get_script_prefix, NoReverseMatch
+import re
 
 
 if sys.version_info[0] >= 3:
@@ -45,11 +46,11 @@ class MongoDocumentField(serializers.WritableField):
                 # finally check for an attribute 'field' on the instance
                 obj = getattr(document, name)
                 if obj and isinstance(field, fields.ReferenceField) and not self.HYPERLINK:
-                    obj = self.uri_or_obj(obj, depth-1, field.document_type)
+                    obj = self.uri_or_obj(obj, depth - 1, field.document_type)
             else:
                 continue
 
-            val = self.transform_object(obj, depth-1)
+            val = self.transform_object(obj, depth - 1)
 
             if val is not None:
                 data[name] = val
@@ -57,7 +58,7 @@ class MongoDocumentField(serializers.WritableField):
         return data
 
     def transform_dict(self, obj, depth):
-        return dict([(key, self.transform_object(val, depth-1))
+        return dict([(key, self.transform_object(val, depth - 1))
                      for key, val in obj.items()])
 
     def transform_object(self, obj, depth, field=None):
@@ -70,20 +71,20 @@ class MongoDocumentField(serializers.WritableField):
         if obj is None:
             return None
         elif isinstance(obj, DBRef) or isinstance(field, RefField):
-            return self.uri_or_obj(obj, depth-1)
+            return self.uri_or_obj(obj, depth - 1)
         elif depth <= 0:
             # Return primary key if exists, else return default text
             return str(getattr(obj, 'pk', "Max recursion depth exceeded"))
         elif isinstance(obj, BaseDocument):
             # Document, EmbeddedDocument
-            return self.transform_document(obj, depth-1)
+            return self.transform_document(obj, depth - 1)
         elif isinstance(obj, dict):
             # Dictionaries
-            return self.transform_dict(obj, depth-1)
+            return self.transform_dict(obj, depth - 1)
         elif isinstance(obj, list):
             # List
             field = getattr(field, 'field', field)
-            return [self.transform_object(value, depth-1, field) for value in obj]
+            return [self.transform_object(value, depth - 1, field) for value in obj]
         else:
             return unicode(obj) if isinstance(obj, ObjectId) else obj
 
@@ -114,14 +115,22 @@ class MongoDocumentField(serializers.WritableField):
     def to_native(self, value):
         if value is not None:
             return json_util._json_convert(self.model_field.to_mongo(value))
-        # self.model_field.to_mongo()
+            # self.model_field.to_mongo()
+
+
+hexaPattern = re.compile(r'[0-9a-fA-F]{24}')
 
 
 class ReferenceField(MongoDocumentField):
-
     type_label = 'ReferenceField'
 
     def from_native(self, value):
+        #TODO detect is value is a URI and extract appropriate objID
+        if len(value.split('/')) > 1:
+            objIds = re.findall(hexaPattern, value)
+            if len(objIds) > 0:
+                return self.from_native(objIds[-1])
+
         try:
             dbref = self.model_field.to_python(value)
         except InvalidId:
@@ -133,26 +142,24 @@ class ReferenceField(MongoDocumentField):
             raise ValidationError(msg)
         return instance
 
-    # def to_native(self, obj):
-    #     return self.transform_object(obj, self.depth)
+        # def to_native(self, obj):
+        # return self.transform_object(obj, self.depth)
 
 
 class ListField(MongoDocumentField):
-
     type_label = 'ListField'
 
     def from_native(self, value):
         return self.model_field.to_python(value)
 
     # def to_native(self, obj):
-    #     return self.transform_object(obj, self.depth)
+    # return self.transform_object(obj, self.depth)
 
     def document_type(self):
         return self.model_field.field.document_type
 
 
 class EmbeddedDocumentField(MongoDocumentField):
-
     type_label = 'EmbeddedDocumentField'
 
     def __init__(self, *args, **kwargs):
@@ -167,7 +174,7 @@ class EmbeddedDocumentField(MongoDocumentField):
         return self.to_native(self.default())
 
     # def to_native(self, obj):
-    #     if obj is None:
+    # if obj is None:
     #         return None
     #     else:
     #         return self.transform_object(obj, self.depth)
@@ -177,16 +184,14 @@ class EmbeddedDocumentField(MongoDocumentField):
 
 
 class DynamicField(MongoDocumentField):
-
     type_label = 'DynamicField'
 
     # def to_native(self, obj):
-    #     return self.transform_object(obj, self.depth)
+    # return self.transform_object(obj, self.depth)
 
 
 class MapField(DynamicField):
-
     type_label = 'MapField'
 
     # def document_type(self):
-    #     return self.model_field.field.document_type
+    # return self.model_field.field.document_type
