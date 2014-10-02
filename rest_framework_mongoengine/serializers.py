@@ -20,6 +20,7 @@ from .ld import Namespaced
 from rest_framework.reverse import reverse
 from django.core.urlresolvers import resolve, get_script_prefix, NoReverseMatch
 from mongoengine.errors import DoesNotExist
+from django.core import validators
 
 field_mapping = {
     mongoengine.FloatField: fields.FloatField,
@@ -80,7 +81,9 @@ class MongoEngineModelSerializer(serializers.ModelSerializer):
 
             if field_name in attrs and hasattr(field, 'model_field'):
                 try:
-                    field.model_field.validate(attrs[field_name])
+                    attr = attrs[field_name]
+                    if attr not in validators.EMPTY_VALUES:
+                        field.model_field.validate(attr)
                 except ValidationError as err:
                     self._errors[field_name] = str(err)
 

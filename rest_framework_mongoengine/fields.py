@@ -11,13 +11,14 @@ from mongoengine import fields
 from rest_framework import serializers
 from mongoengine.fields import ObjectId
 from bson import json_util
+import json
 
 import sys
 from bson import DBRef
 from rest_framework.reverse import reverse
 from django.core.urlresolvers import resolve, get_script_prefix, NoReverseMatch
 import re
-
+from django.core import validators
 
 if sys.version_info[0] >= 3:
     def unicode(val):
@@ -37,95 +38,31 @@ class MongoDocumentField(serializers.WritableField):
 
         super(MongoDocumentField, self).__init__(*args, **kwargs)
 
-    def transform_document(self, document, depth):
-        data = {}
-
-        # serialize each required field
-        for name, field in document._fields.iteritems():
-            if hasattr(document, smart_str(name)):
-                # finally check for an attribute 'field' on the instance
-                obj = getattr(document, name)
-                if obj and isinstance(field, fields.ReferenceField) and not self.HYPERLINK:
-                    obj = self.uri_or_obj(obj, depth - 1, field.document_type)
-            else:
-                continue
-
-            val = self.transform_object(obj, depth - 1)
-
-            if val is not None:
-                data[name] = val
-
-        return data
-
-    def transform_dict(self, obj, depth):
-        return dict([(key, self.transform_object(val, depth - 1))
-                     for key, val in obj.items()])
-
-    def transform_object(self, obj, depth, field=None):
-        """
-        Models to natives
-        Recursion for (embedded) objects
-        """
-        if field is None:
-            field = getattr(self, 'model_field', None)
-        if obj is None:
-            return None
-        elif isinstance(obj, DBRef) or isinstance(field, RefField):
-            return self.uri_or_obj(obj, depth - 1)
-        elif depth <= 0:
-            # Return primary key if exists, else return default text
-            return str(getattr(obj, 'pk', "Max recursion depth exceeded"))
-        elif isinstance(obj, BaseDocument):
-            # Document, EmbeddedDocument
-            return self.transform_document(obj, depth - 1)
-        elif isinstance(obj, dict):
-            # Dictionaries
-            return self.transform_dict(obj, depth - 1)
-        elif isinstance(obj, list):
-            # List
-            field = getattr(field, 'field', field)
-            return [self.transform_object(value, depth - 1, field) for value in obj]
-        else:
-            return unicode(obj) if isinstance(obj, ObjectId) else obj
-
-    def uri_or_obj(self, obj, depth, doc_type=None):
-        if obj is None:
-            return None
-        try:
-            document_type = doc_type or self.document_type()
-            view = self.context.get('view', None)
-            lookup_field = view.lookup_field if view else 'id'
-            kwargs = {lookup_field: str(obj.id)}
-
-            # view_name = self.view_name
-            request = self.context.get('request', None)
-            format = self.context.get('format', None)
-
-            view_name = self.parent._get_default_view_name(document_type)
-            return reverse(view_name, kwargs=kwargs, request=request, format=format)
-        except NoReverseMatch:
-            try:
-                return self.transform_object(document_type.objects.get(id=obj.id), depth)
-            except DoesNotExist:
-                pass
-
-    def document_type(self):
-        return self.model_field.document_type
-
     def to_native(self, value):
         if value is not None:
             return json_util._json_convert(self.model_field.to_mongo(value))
-            # self.model_field.to_mongo()
 
+    def from_native(self, value):
+        if value in validators.EMPTY_VALUES:
+            return self.empty
+        try:
+            value = json.loads(value)
+        except (ValueError, TypeError):
+            pass
+        return super(MongoDocumentField, self).from_native(value)
 
 hexaPattern = re.compile(r'[0-9a-fA-F]{24}')
 
 
 class ReferenceField(MongoDocumentField):
     type_label = 'ReferenceField'
+    empty = None
 
     def from_native(self, value):
+        if value in validators.EMPTY_VALUES:
+            return None
         #TODO detect is value is a URI and extract appropriate objID
+        # django.core.validators.URLValidator
         if len(value.split('/')) > 1:
             objIds = re.findall(hexaPattern, value)
             if len(objIds) > 0:
@@ -142,21 +79,10 @@ class ReferenceField(MongoDocumentField):
             raise ValidationError(msg)
         return instance
 
-        # def to_native(self, obj):
-        # return self.transform_object(obj, self.depth)
-
 
 class ListField(MongoDocumentField):
     type_label = 'ListField'
-
-    def from_native(self, value):
-        return self.model_field.to_python(value)
-
-    # def to_native(self, obj):
-    # return self.transform_object(obj, self.depth)
-
-    def document_type(self):
-        return self.model_field.field.document_type
+    empty = []
 
 
 class EmbeddedDocumentField(MongoDocumentField):
@@ -173,25 +99,11 @@ class EmbeddedDocumentField(MongoDocumentField):
     def get_default_value(self):
         return self.to_native(self.default())
 
-    # def to_native(self, obj):
-    # if obj is None:
-    #         return None
-    #     else:
-    #         return self.transform_object(obj, self.depth)
-
-    def from_native(self, value):
-        return self.model_field.to_python(value)
-
 
 class DynamicField(MongoDocumentField):
     type_label = 'DynamicField'
-
-    # def to_native(self, obj):
-    # return self.transform_object(obj, self.depth)
+    empty = {}
 
 
 class MapField(DynamicField):
     type_label = 'MapField'
-
-    # def document_type(self):
-    # return self.model_field.field.document_type
