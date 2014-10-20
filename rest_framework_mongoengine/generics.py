@@ -2,6 +2,7 @@ from django.core.exceptions import ImproperlyConfigured
 from rest_framework import mixins
 from rest_framework.generics import GenericAPIView
 from mongoengine.django.shortcuts import get_document_or_404
+from mongoengine.queryset import QuerySet
 
 
 class MongoAPIView(GenericAPIView):
@@ -38,11 +39,7 @@ class MongoAPIView(GenericAPIView):
                 queryset = self.get_serializer().opts.model.objects
             else:
                 queryset = self.get_serializer().opts.model.objects.no_dereference()
-        if queryset:
-            # if not self._auto_dereference:
-            #     queryset.no_dereference()
-            return queryset
-        return []
+        return queryset
 
     def get_query_kwargs(self):
         """
