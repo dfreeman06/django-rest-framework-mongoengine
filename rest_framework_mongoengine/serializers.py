@@ -12,7 +12,7 @@ from django.db import models
 from django.forms import widgets
 from django.utils.datastructures import SortedDict
 from rest_framework.compat import get_concrete_model
-from .fields import ReferenceField, ListField, EmbeddedDocumentField, DynamicField, MapField
+from .fields import ReferenceField, ListField, EmbeddedDocumentField, DynamicField, MapField, MongoDocumentField
 from rest_framework.settings import api_settings
 from rest_framework.relations import HyperlinkedRelatedField, HyperlinkedIdentityField, RelatedField
 from bson import DBRef
@@ -191,7 +191,7 @@ class MongoEngineModelSerializer(serializers.ModelSerializer):
             return field_mapping[model_field.__class__](**kwargs)
         except KeyError:
             # Defaults to WritableField if not in field mapping
-            return fields.WritableField(**kwargs)
+            return MongoDocumentField(**kwargs)
 
     def to_native(self, obj):
         """
