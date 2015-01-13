@@ -12,9 +12,14 @@ from collections import OrderedDict
 from rest_framework import serializers
 from rest_framework import fields as drf_fields
 from rest_framework_mongoengine.utils import get_field_info
-from rest_framework_mongoengine.fields import (ReferenceField, ListField, EmbeddedDocumentField, DynamicField,
+from rest_framework_mongoengine.fields import (ReferenceField, ListField, EmbeddedDocumentField, DynamicField, MapField,
                                                ObjectIdField)
+from rest_framework.settings import api_settings
+from rest_framework.relations import HyperlinkedRelatedField, HyperlinkedIdentityField, RelatedField
 import copy
+# from .ld import Namespaced
+from bson import ObjectId, DBRef
+import re
 
 
 def raise_errors_on_nested_writes(method_name, serializer, validated_data):
@@ -119,7 +124,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             - maybe a better way to implement transform_%s methods on fields.py
 
     """
-    def __init__(self, instance=None, data=None, **kwargs):
+    def __init__(self, instance=None, data=drf_fields.empty, **kwargs):
         super(DocumentSerializer, self).__init__(instance=instance, data=data, **kwargs)
         if not hasattr(self.Meta, 'model'):
             raise AssertionError('You should set `model` attribute on %s.' % type(self).__name__)
@@ -142,7 +147,9 @@ class DocumentSerializer(serializers.ModelSerializer):
         me_fields.EmbeddedDocumentField: EmbeddedDocumentField,
         me_fields.DynamicField: DynamicField,
         me_fields.DecimalField: drf_fields.DecimalField,
-        me_fields.UUIDField: drf_fields.CharField
+        me_fields.UUIDField: drf_fields.CharField,
+        me_fields.MapField: MapField,
+        me_fields.DictField: DynamicField,
     }
 
     embedded_document_serializer_fields = []
@@ -469,3 +476,29 @@ class EmbeddedDocumentSerializer(DocumentSerializer):
             list(model_info.fields.keys()) +
             list(model_info.forward_relations.keys())
         )
+
+
+class HyperlinkedModelSerializer(DocumentSerializer):
+    """
+    A type of `ModelSerializer` that uses hyperlinked relationships instead
+    of primary key relationships. Specifically:
+    * A 'url' field is included instead of the 'id' field.
+    * Relationships to other instances are hyperlinks, instead of primary keys.
+    """
+    _related_class = HyperlinkedRelatedField
+
+    def _get_default_field_names(self, declared_fields, model_info):
+        return (
+            [api_settings.URL_FIELD_NAME] +
+            list(declared_fields.keys()) +
+            list(model_info.fields.keys()) +
+            list(model_info.forward_relations.keys())
+        )
+
+    def _get_nested_class(self, nested_depth, relation_info):
+        class NestedSerializer(HyperlinkedModelSerializer):
+            class Meta:
+                model = relation_info.related
+                depth = nested_depth - 1
+
+        return NestedSerializer

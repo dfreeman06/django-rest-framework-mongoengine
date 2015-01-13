@@ -8,6 +8,7 @@ from mongoengine import dereference
 from mongoengine.base.document import BaseDocument
 from mongoengine.document import Document
 from mongoengine.fields import ObjectId
+import mongoengine.fields as fields
 
 
 class DocumentField(serializers.Field):
@@ -22,8 +23,8 @@ class DocumentField(serializers.Field):
 
     def __init__(self, *args, **kwargs):
         try:
-            self.model_field = kwargs.pop('model_field')
-            self.depth = kwargs.pop('depth')
+            self.model_field = kwargs.pop('model_field', fields.DynamicField())
+            self.depth = kwargs.pop('depth', 1)
         except KeyError:
             raise ValueError("%s requires 'model_field' kwarg" % self.type_label)
 
@@ -165,3 +166,6 @@ class ObjectIdField(serializers.Field):
 
     def to_internal_value(self, data):
         return ObjectId(data)
+
+class MapField(DynamicField):
+    type_label = 'MapField'
