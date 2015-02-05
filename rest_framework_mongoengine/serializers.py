@@ -13,7 +13,8 @@ from rest_framework import serializers
 from rest_framework import fields as drf_fields
 from rest_framework_mongoengine.utils import get_field_info
 from rest_framework_mongoengine.fields import (ReferenceField, ListField, EmbeddedDocumentField, DynamicField,
-                                               ObjectIdField, DocumentField, BinaryField, BaseGeoField)
+                                               ObjectIdField, DocumentField, BinaryField, BaseGeoField, DRFME_FIELD_MAPPING)
+from rest_framework_mongoengine.fields import ME_FIELD_MAPPING, DRFME_FIELD_MAPPING
 import copy
 
 
@@ -125,35 +126,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             raise AssertionError('You should set `model` attribute on %s.' % type(self).__name__)
 
     MAX_RECURSION_DEPTH = 5  # default value of depth
-    field_mapping = {
-        me_fields.FloatField: drf_fields.FloatField,
-        me_fields.IntField: drf_fields.IntegerField,
-        me_fields.DateTimeField: drf_fields.DateTimeField,
-        me_fields.EmailField: drf_fields.EmailField,
-        me_fields.URLField: drf_fields.URLField,
-        me_fields.StringField: drf_fields.CharField,
-        me_fields.BooleanField: drf_fields.BooleanField,
-        me_fields.FileField: drf_fields.FileField,
-        me_fields.ImageField: drf_fields.ImageField,
-        me_fields.UUIDField: drf_fields.CharField,
-        me_fields.DecimalField: drf_fields.DecimalField
-    }
-
-    _drfme_field_mapping = {
-        me_fields.ObjectIdField: ObjectIdField,
-        me_fields.ReferenceField: ReferenceField,
-        me_fields.ListField: ListField,
-        me_fields.EmbeddedDocumentField: EmbeddedDocumentField,
-        me_fields.DynamicField: DynamicField,
-        me_fields.DictField: DocumentField,
-        me_fields.BinaryField: BinaryField,
-        me_fields.GeoPointField: BaseGeoField,
-        me_fields.PointField: BaseGeoField,
-        me_fields.PolygonField: BaseGeoField,
-        me_fields.LineStringField: BaseGeoField,
-    }
-
-    field_mapping.update(_drfme_field_mapping)
+    field_mapping = ME_FIELD_MAPPING
 
     embedded_document_serializer_fields = []
 
@@ -323,11 +296,9 @@ class DocumentSerializer(serializers.ModelSerializer):
         """
         kwargs = {}
 
-        if type(model_field) in self._drfme_field_mapping:
-            kwargs['model_field'] = model_field
-
-        if type(model_field) in (me_fields.ReferenceField, me_fields.ListField):
+        if type(model_field) in DRFME_FIELD_MAPPING:
             kwargs['depth'] = getattr(self.Meta, 'depth', self.MAX_RECURSION_DEPTH)
+            kwargs['model_field'] = model_field
 
         if type(model_field) is me_fields.ObjectIdField:
             kwargs['required'] = False
@@ -359,6 +330,12 @@ class DocumentSerializer(serializers.ModelSerializer):
                 kwargs.update({attribute: getattr(model_field, attribute)})
 
         return kwargs
+    def to_representation(self, instance):
+        ret = OrderedDict()
+        fields = self.get_fields()
+        for field in fields:
+            ret[field] = fields[field].to_representation(getattr(instance, field))
+        return ret
 
     def create(self, validated_data):
         """
