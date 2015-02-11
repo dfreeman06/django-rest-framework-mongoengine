@@ -3,6 +3,7 @@ from django.utils.encoding import smart_str
 
 from rest_framework import serializers
 from bson.errors import InvalidId
+from bson import DBRef, ObjectId
 
 from mongoengine import dereference
 from mongoengine.base.document import BaseDocument
@@ -13,6 +14,8 @@ from collections import OrderedDict
 
 from mongoengine import fields as me_fields
 from rest_framework import fields as drf_fields
+from rest_framework.fields import get_attribute, SkipField, empty
+from rest_framework.utils import html
 
 from rest_framework_mongoengine.utils import get_field_info
 
@@ -30,6 +33,8 @@ class DocumentField(serializers.Field):
         self.field_mapping = ME_FIELD_MAPPING
 
         self.depth = kwargs.pop('depth')
+        #hotwire
+        self.depth = 0
         try:
             self.model_field = kwargs.pop('model_field')
         except KeyError:
@@ -41,6 +46,7 @@ class DocumentField(serializers.Field):
         #clean out DRFME kwargs if we're calling a DRF field
         kwargs.pop('depth', None)
         kwargs.pop('model_field', None)
+        kwargs.pop('document_type', None)
         return kwargs
 
     def to_internal_value(self, data):
@@ -87,33 +93,37 @@ class ReferenceField(DocumentField):
         try:
             dbref = self.model_field.to_python(data)
         except InvalidId:
-            raise ValidationError(self.error_messages['invalid'])
+            raise ValidationError(self.error_messages['invalid_dbref'])
 
-        instance = dereference.DeReference()([dbref])[0]
+        return dbref
 
-        # Check if dereference was successful
-        if not isinstance(instance, Document):
-            msg = self.error_messages['invalid']
-            raise ValidationError(msg)
 
-        return instance
+    def get_attribute(self, instance):
+        #need to overwrite this, since drf's version
+        #will call get_attr(instance, field_name), which dereferences ReferenceFields
+        #even if we don't need them. We need it to be mindful of depth.
+        if not self.depth:
+            #return dbref by grabbing data directly, instead of going through the ReferenceField's __get__ method
+            return instance._data[self.source]
+
+        return super(DocumentField, self).get_attribute(instance)
+
 
     def to_representation(self, value):
+        #value is either DBRef (if we're out of depth)
+        #else a MongoEngine model reference.
+
         if value is None:
             return None
 
-        if self.depth:
-
+        if isinstance(value, DBRef):
+            return smart_str(value.id)
+        else:
             #get model's fields
             ret = OrderedDict()
             for field_name in value._fields:
                 ret[field_name] = self.child_fields[field_name].to_representation(getattr(value, field_name))
             return ret
-        else:
-            #out of depth, stop
-            pk = getattr(value, 'pk')
-            return smart_str(pk)
-        #return self.transform_object(value, self.depth - 1)
 
 
 class ListField(DocumentField):
@@ -123,26 +133,54 @@ class ListField(DocumentField):
     def __init__(self, *args, **kwargs):
         super(ListField, self).__init__(*args, **kwargs)
 
-        #instantiate the inner field
-        inner_field_instance = self.model_field.field
-        inner_field_cls = inner_field_instance.__class__
+        #instantiate the nested field
+        nested_field_instance = self.model_field.field
+        nested_field_cls = nested_field_instance.__class__
 
         kwargs.update({
-            'model_field': inner_field_instance
+            'model_field': nested_field_instance
         })
-        if self.field_mapping[inner_field_cls] in (EmbeddedDocumentField, ):
-            kwargs['document_type'] = inner_field_instance.document_type
-        elif inner_field_cls not in DRFME_FIELD_MAPPING:
+        if self.field_mapping[nested_field_cls] in (EmbeddedDocumentField, ):
+            #if the nested field is an embedded document, pass along its document_type
+            kwargs['document_type'] = nested_field_instance.document_type
+        elif not issubclass(self.field_mapping[nested_field_cls], DocumentField):
+            #if nested class isn't a DocumentField, remove all the kwargs that may break it.
             kwargs = self.remove_drfme_kwargs(kwargs)
 
-        self.inner_field = self.field_mapping[inner_field_cls](**kwargs)
+        #initialize field
+        self.nested_field = self.field_mapping[nested_field_cls](**kwargs)
+        #and bind it, since that isn't being handled by the Serializer's BindingDict
+        self.nested_field.bind('', self)
+
+    def get_value(self, dictionary):
+        # We override the default field access in order to support
+        # lists in HTML forms.
+        if html.is_html_input(dictionary):
+            value = html.parse_html_list(dictionary, prefix=self.field_name)
+            return value
+        return dictionary.get(self.field_name, empty)
+
 
     def to_internal_value(self, data):
-        return self.model_field.to_python(data)
+        """
+        List of dicts of native values <- List of dicts of primitive datatypes.
+        """
+        if html.is_html_input(data):
+            data = html.parse_html_list(data)
+        if isinstance(data, type('')) or not hasattr(data, '__iter__'):
+            self.fail('not_a_list', input_type=type(data).__name__)
+        return [self.nested_field.run_validation(item) for item in data]
+
+    def get_attribute(self, instance):
+        #since this is a passthrough, be careful about dereferencing the contents.
+        if not self.depth:
+            #return data by grabbing it directly, instead of going through the field's __get__ method
+            return instance._data[self.source]
+        return super(DocumentField, self).get_attribute(instance)
+
 
     def to_representation(self, value):
-        return [self.inner_field.to_representation(v) for v in value]
-        #return self.transform_object(value, self.depth - 1)
+        return [self.nested_field.to_representation(v) for v in value]
 
 
 class EmbeddedDocumentField(DocumentField):
@@ -158,14 +196,15 @@ class EmbeddedDocumentField(DocumentField):
 
         super(EmbeddedDocumentField, self).__init__(*args, **kwargs)
 
-        #if depth is going to require we recurse, build a list of the child document's fields.
-        if self.depth:
+        #if depth is going to require we recurse, build a list of the embedded document's fields.
+        #if self.depth:
+        if True:
             field_info = get_field_info(self.document_type)
             self.child_fields = {}
             for field_name in field_info.fields:
                 model_field = field_info.fields[field_name]
                 kwargs.update({
-                    'depth': self.depth - 1,
+                    'depth': self.depth,# - 1,
                     'model_field': model_field
                 })
 
@@ -173,21 +212,37 @@ class EmbeddedDocumentField(DocumentField):
                     kwargs = self.remove_drfme_kwargs(kwargs)
                 #create the serializer field for this model_field
                 field = self.field_mapping[model_field.__class__](**kwargs)
+                field.bind("field_name", self)
 
                 self.child_fields[field_name] = field
+
+    def get_attribute(self, instance):
+        #return dict of whatever our fields pass back to us..
+        ret = OrderedDict()
+
+        #if self.depth:
+        if True:
+            for field_name in self.child_fields:
+                field = self.child_fields[field_name]
+                ret[field_name] = field.get_attribute(instance[self.source])
+            return ret
+
+        else:
+            return ret #"or something else here?"
 
 
     def to_representation(self, value):
         if value is None:
             return None
-        elif self.depth:
+        #elif self.depth:
+        else:
             #get model's fields
             ret = OrderedDict()
-            for field_name in value._fields:
-                ret[field_name] = self.child_fields[field_name].to_representation(getattr(value, field_name))
+            for field_name in self.child_fields:
+                ret[field_name] = self.child_fields[field_name].to_representation(value._data[field_name])
             return ret
-        else:
-            return "<<Embedded Document (Maximum recursion depth exceeded)>>"
+        #else:
+        #    return "<<Embedded Document (Maximum recursion depth exceeded)>>"
 
     def to_internal_value(self, data):
         return self.model_field.to_python(data)

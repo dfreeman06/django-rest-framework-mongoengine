@@ -11,6 +11,7 @@ from collections import OrderedDict
 
 from rest_framework import serializers
 from rest_framework import fields as drf_fields
+from rest_framework.fields import SkipField
 from rest_framework_mongoengine.utils import get_field_info
 from rest_framework_mongoengine.fields import (ReferenceField, ListField, EmbeddedDocumentField, DynamicField,
                                                ObjectIdField, DocumentField, BinaryField, BaseGeoField, DRFME_FIELD_MAPPING)
@@ -134,35 +135,66 @@ class DocumentSerializer(serializers.ModelSerializer):
         validators = getattr(getattr(self, 'Meta', None), 'validators', [])
         return validators
 
-    def is_valid(self, raise_exception=False):
+    def get_field_kwargs(self, model_field):
         """
-        Call super.is_valid() and then apply embedded document serializer's validations.
+        Get kwargs that will be used for validation/serialization
         """
-        valid = super(DocumentSerializer, self).is_valid(raise_exception=raise_exception)
+        kwargs = {}
 
-        for embedded_field in self.embedded_document_serializer_fields:
-            embedded_field._initial_data = self.validated_data.pop(embedded_field.field_name, serializers.empty)
-            valid &= embedded_field.is_valid(raise_exception=raise_exception)
+        #kwargs to pass to all drfme fields
+        #this includes lists, dicts, embedded documents, etc
+        #depth included for flow control during recursive serialization.
+        if issubclass(ME_FIELD_MAPPING[model_field.__class__], DocumentField):
+            kwargs['model_field'] = model_field
+            kwargs['depth'] = getattr(self.Meta, 'depth', self.MAX_RECURSION_DEPTH)
 
-        return valid
+        if type(model_field) is me_fields.ObjectIdField:
+            kwargs['required'] = False
+        else:
+            kwargs['required'] = model_field.required
+
+        if type(model_field) is me_fields.EmbeddedDocumentField:
+            kwargs['document_type'] = model_field.document_type
+
+        if model_field.default:
+            kwargs['required'] = False
+            kwargs['default'] = model_field.default
+
+        attribute_dict = {
+            me_fields.StringField: ['max_length'],
+            me_fields.DecimalField: ['min_value', 'max_value'],
+            me_fields.EmailField: ['max_length'],
+            me_fields.FileField: ['max_length'],
+            me_fields.URLField: ['max_length'],
+            me_fields.BinaryField: ['max_bytes']
+        }
+
+        #append any extra attributes based on the dict above, as needed.
+        if model_field.__class__ in attribute_dict:
+            attributes = attribute_dict[model_field.__class__]
+            for attribute in attributes:
+                kwargs.update({attribute: getattr(model_field, attribute)})
+
+        return kwargs
 
     def get_fields(self):
-        """
-        Get fields.
-        Inherited mostly from DRF 3 get_fields()
-        and then altered for Mongoengine compability.
-        Mosts of the code could be unnecessary or irrelevant.
-        Needs a lot of refactor
-        """
+        #fields declared on Serializer (e.g. Name = CharField() in class definition)
         declared_fields = copy.deepcopy(self._declared_fields)
 
+        #instantiate return OrderedDictionary
         ret = OrderedDict()
-        model = getattr(self.Meta, 'model')
-        fields = getattr(self.Meta, 'fields', None)
-        exclude = getattr(self.Meta, 'exclude', None)
-        depth = getattr(self.Meta, 'depth', 0)
-        extra_kwargs = getattr(self.Meta, 'extra_kwargs', {})
 
+        #get info from Meta
+        model = getattr(self.Meta, 'model') #model for serializer
+        fields = getattr(self.Meta, 'fields', None) #explicit list of fields
+        exclude = getattr(self.Meta, 'exclude', None) #list of fields to exclude
+        depth = getattr(self.Meta, 'depth', 0) #depth to crawl to
+        extra_kwargs = getattr(self.Meta, 'extra_kwargs', {}) #extra kwargs.
+
+        #format extra kwargs
+        extra_kwargs = self._include_additional_options(extra_kwargs)
+
+        #check fields and exclude, make sure they didn't do anything stupid
         if fields and not isinstance(fields, (list, tuple)):
             raise TypeError(
                 'The `fields` option must be a list or tuple. Got %s.' %
@@ -177,31 +209,36 @@ class DocumentSerializer(serializers.ModelSerializer):
 
         assert not (fields and exclude), "Cannot set both 'fields' and 'exclude'."
 
-        extra_kwargs = self._include_additional_options(extra_kwargs)
-
         # # Retrieve metadata about fields & relationships on the model class.
         info = get_field_info(model)
 
         # Use the default set of field names if none is supplied explicitly.
         if fields is None:
+            #no fields set, so define the defaults.
             fields = self._get_default_field_names(declared_fields, info)
-            exclude = getattr(self.Meta, 'exclude', None)
+
+            #if serializer lists fields to exclude, drop them from the list.
             if exclude is not None:
                 for field_name in exclude:
                     fields.remove(field_name)
+
 
         # Determine the set of model fields, and the fields that they map to.
         # We actually only need this to deal with the slightly awkward case
         # of supporting `unique_for_date`/`unique_for_month`/`unique_for_year`.
         model_field_mapping = {}
         embedded_list = []
+        #for all fields we're going to serialize..
         for field_name in fields:
             if field_name in declared_fields:
+                #if we declared it, get the source from the field we declared (or use field_name as default)
                 field = declared_fields[field_name]
                 source = field.source or field_name
                 if isinstance(field, EmbeddedDocumentSerializer):
                     embedded_list.append(field)
             else:
+                #fields we didn't define in Serializer class (and are being built from the model)
+                #get source from extra_kwargs, or use field_name as default.
                 try:
                     source = extra_kwargs[field_name]['source']
                 except KeyError:
@@ -211,14 +248,11 @@ class DocumentSerializer(serializers.ModelSerializer):
             if '.' not in source and source != '*':
                 model_field_mapping[source] = field_name
 
+        #only includes EmbeddedDocumentSerializers specifically defined in declared_fields
+        #everything else will be using an EmbeddedDocumentField (or similar)
         self.embedded_document_serializer_fields = embedded_list
 
-        # Determine if we need any additional `HiddenField` or extra keyword
-        # arguments to deal with `unique_for` dates that are required to
-        # be in the input data in order to validate it.
-        hidden_fields = {}
-
-        # Now determine the fields that should be included on the serializer.
+        #Now determine the fields that should be included on the serializer.
         for field_name in fields:
             if field_name in declared_fields:
                 # Field is explicitly declared on the class, use that.
@@ -237,20 +271,15 @@ class DocumentSerializer(serializers.ModelSerializer):
                                    type(model_field))
 
                 kwargs = self.get_field_kwargs(model_field)
-                if 'choices' in kwargs:
-                    # Fields with choices get coerced into `ChoiceField`
-                    # instead of using their regular typed field.
-                    field_cls = drf_fields.ChoiceField
-                if not issubclass(field_cls, drf_fields.CharField) and not issubclass(field_cls, drf_fields.ChoiceField):
-                    # `allow_blank` is only valid for textual fields.
-                    kwargs.pop('allow_blank', None)
 
             elif hasattr(model, field_name):
+                #if not a field, but exists on the model,
                 # Create a read only field for model methods and properties.
                 field_cls = drf_fields.ReadOnlyField
                 kwargs = {}
 
             else:
+                #bad ju-ju. Shouldn't get here (as all fields should be explicitly declared or part of model
                 raise ImproperlyConfigured(
                     'Field name `%s` is not valid for model `%s`.' %
                     (field_name, model.__class__.__name__)
@@ -270,6 +299,8 @@ class DocumentSerializer(serializers.ModelSerializer):
             # Populate any kwargs defined in `Meta.extra_kwargs`
             extras = extra_kwargs.get(field_name, {})
             if extras.get('read_only', False):
+                #if defined as read_only, drop any kwargs that don't work with that
+                #from kwargs that will be passed to field's init
                 for attr in [
                     'required', 'default', 'allow_blank', 'allow_null',
                     'min_length', 'max_length', 'min_value', 'max_value',
@@ -282,59 +313,51 @@ class DocumentSerializer(serializers.ModelSerializer):
 
             kwargs.update(extras)
 
-            # Create the serializer field.
+            # Create the serializer field, finally.
             ret[field_name] = field_cls(**kwargs)
-
-        for field_name, field in hidden_fields.items():
-            ret[field_name] = field
 
         return ret
 
-    def get_field_kwargs(self, model_field):
+    def is_valid(self, raise_exception=False):
         """
-        Get kwargs that will be used for validation/serialization
+        Call super.is_valid() and then apply embedded document serializer's validations.
         """
-        kwargs = {}
+        valid = super(DocumentSerializer, self).is_valid(raise_exception=raise_exception)
 
-        if type(model_field) in DRFME_FIELD_MAPPING:
-            kwargs['depth'] = getattr(self.Meta, 'depth', self.MAX_RECURSION_DEPTH)
-            kwargs['model_field'] = model_field
+        for embedded_field in self.embedded_document_serializer_fields:
+            embedded_field._initial_data = self.validated_data.pop(embedded_field.field_name, serializers.empty)
+            valid &= embedded_field.is_valid(raise_exception=raise_exception)
 
-        if type(model_field) is me_fields.ObjectIdField:
-            kwargs['required'] = False
-        else:
-            kwargs['required'] = model_field.required
+        return valid
 
-        if type(model_field) is me_fields.EmbeddedDocumentField:
-            kwargs['document_type'] = model_field.document_type
-
-        if model_field.default:
-            kwargs['required'] = False
-            kwargs['default'] = model_field.default
-
-        if model_field.__class__ == models.TextField:
-            kwargs['widget'] = widgets.Textarea
-
-        attribute_dict = {
-            me_fields.StringField: ['max_length'],
-            me_fields.DecimalField: ['min_value', 'max_value'],
-            me_fields.EmailField: ['max_length'],
-            me_fields.FileField: ['max_length'],
-            me_fields.URLField: ['max_length'],
-            me_fields.BinaryField: ['max_bytes']
-        }
-
-        if model_field.__class__ in attribute_dict:
-            attributes = attribute_dict[model_field.__class__]
-            for attribute in attributes:
-                kwargs.update({attribute: getattr(model_field, attribute)})
-
-        return kwargs
     def to_representation(self, instance):
+        """
+        Object instance -> Dict of primitive datatypes.
+        """
+        #instantiate return dict
         ret = OrderedDict()
-        fields = self.get_fields()
+
+        #get list of fields from self.fields.values()
+        fields = [field for field in self.fields.values() if not field.write_only]
+
         for field in fields:
-            ret[field] = fields[field].to_representation(getattr(instance, field))
+                try:
+                    #get attribute from field
+                    #probably primitive datatype for simple fields (text, int, etc)
+                    #possibly something more complicated for objects, lists, or whatnot.
+                    attribute = field.get_attribute(instance)
+                except SkipField:
+                    continue
+
+                if attribute is None:
+                    # We skip `to_representation` for `None` values so that
+                    # fields do not have to explicitly deal with that case.
+                    ret[field.field_name] = None
+                else:
+                    #pass the attribute to the to_representation function to get final representation
+                    #of the data.
+                    ret[field.field_name] = field.to_representation(attribute)
+
         return ret
 
     def create(self, validated_data):
