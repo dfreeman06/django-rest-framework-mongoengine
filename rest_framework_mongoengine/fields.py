@@ -5,6 +5,8 @@ from rest_framework import serializers
 from bson.errors import InvalidId
 from bson import DBRef, ObjectId
 
+import json
+
 from mongoengine import dereference
 from mongoengine.base.document import BaseDocument
 from mongoengine.document import Document, EmbeddedDocument
@@ -156,10 +158,11 @@ class ListField(DocumentField):
         # We override the default field access in order to support
         # lists in HTML forms.
         if html.is_html_input(dictionary):
-            value = html.parse_html_list(dictionary, prefix=self.field_name)
-            return value
-        return dictionary.get(self.field_name, empty)
-
+            return html.parse_html_list(dictionary, prefix=self.field_name)
+        value = dictionary.get(self.field_name, empty)
+        #if isinstance(value, type('')):
+        #    return json.loads(value)
+        return value
 
     def to_internal_value(self, data):
         """
@@ -188,7 +191,7 @@ class EmbeddedDocumentField(DocumentField):
     type_label = 'EmbeddedDocumentField'
 
     def __init__(self, *args, **kwargs):
-
+        self.ignore_depth = True #set this from a kwarg!
         try:
             self.document_type = kwargs.pop('document_type')
         except KeyError:
@@ -197,16 +200,18 @@ class EmbeddedDocumentField(DocumentField):
         super(EmbeddedDocumentField, self).__init__(*args, **kwargs)
 
         #if depth is going to require we recurse, build a list of the embedded document's fields.
-        #if self.depth:
-        if True:
+        if self.depth or self.ignore_depth:
             field_info = get_field_info(self.document_type)
             self.child_fields = {}
             for field_name in field_info.fields:
                 model_field = field_info.fields[field_name]
                 kwargs.update({
-                    'depth': self.depth,# - 1,
+                    'depth': self.depth if self.ignore_depth else self.depth - 1,
                     'model_field': model_field
                 })
+                if self.field_mapping[model_field.__class__] in (EmbeddedDocumentField, ):
+                    #if the nested field is an embedded document, pass along its document_type
+                    kwargs['document_type'] = model_field.document_type
 
                 if model_field.__class__ not in DRFME_FIELD_MAPPING:
                     kwargs = self.remove_drfme_kwargs(kwargs)
@@ -220,29 +225,27 @@ class EmbeddedDocumentField(DocumentField):
         #return dict of whatever our fields pass back to us..
         ret = OrderedDict()
 
-        #if self.depth:
-        if True:
+        if self.depth or self.ignore_depth:
             for field_name in self.child_fields:
                 field = self.child_fields[field_name]
                 ret[field_name] = field.get_attribute(instance[self.source])
             return ret
 
         else:
-            return ret #"or something else here?"
+            return ret #"something else here?"
 
 
     def to_representation(self, value):
         if value is None:
             return None
-        #elif self.depth:
-        else:
+        elif self.depth or self.ignore_depth:
             #get model's fields
             ret = OrderedDict()
             for field_name in self.child_fields:
                 ret[field_name] = self.child_fields[field_name].to_representation(value._data[field_name])
             return ret
-        #else:
-        #    return "<<Embedded Document (Maximum recursion depth exceeded)>>"
+        else:
+            return "<<Embedded Document (Maximum recursion depth exceeded)>>"
 
     def to_internal_value(self, data):
         return self.model_field.to_python(data)
@@ -259,8 +262,13 @@ class DynamicField(DocumentField):
         if source:
             self.source_attrs = self.source.split('.')
 
+    def get_attribute(self, instance):
+        #go ahead and get data from the source
+        return instance._data[self.source]
+
     def to_representation(self, value):
-        return self.model_field.to_python(value)
+        #probably should do something a bit smarter?
+        return smart_str(value)
 
 
 class ObjectIdField(DocumentField):
