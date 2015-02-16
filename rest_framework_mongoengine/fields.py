@@ -45,11 +45,44 @@ class DocumentField(serializers.Field):
 
         super(DocumentField, self).__init__(*args, **kwargs)
 
-    def remove_drfme_kwargs(self, kwargs):
-        #clean out DRFME kwargs if we're calling a DRF field
-        kwargs.pop('depth', None)
-        kwargs.pop('model_field', None)
-        kwargs.pop('document_type', None)
+    def get_subfield_kwargs(self, subfield):
+        """
+        Get kwargs that will be used for validation/serialization
+        """
+        kwargs = {}
+
+        #kwargs to pass to all drfme fields
+        #this includes lists, dicts, embedded documents, etc
+        #depth included for flow control during recursive serialization.
+        if is_drfme_field(subfield):
+            kwargs['model_field'] = subfield
+            kwargs['depth'] = self.depth - 1
+
+        if type(subfield) is me_fields.ObjectIdField:
+            kwargs['required'] = False
+        else:
+            kwargs['required'] = subfield.required
+
+        if subfield.default:
+            kwargs['required'] = False
+            kwargs['default'] = subfield.default
+
+        attribute_dict = {
+            me_fields.StringField: ['max_length'],
+            me_fields.DecimalField: ['min_value', 'max_value'],
+            me_fields.EmailField: ['max_length'],
+            me_fields.FileField: ['max_length'],
+            me_fields.URLField: ['max_length'],
+            me_fields.BinaryField: ['max_bytes']
+        }
+
+        #append any extra attributes based on the dict above, as needed.
+        if subfield.__class__ in attribute_dict:
+            attributes = attribute_dict[subfield.__class__]
+            for attribute in attributes:
+                if hasattr(subfield, attribute):
+                    kwargs.update({attribute: getattr(subfield, attribute)})
+
         return kwargs
 
     def to_internal_value(self, data):
@@ -80,13 +113,7 @@ class ReferenceField(DocumentField):
             self.child_fields = {}
             for field_name in field_info.fields_and_pk:
                 model_field = field_info.fields_and_pk[field_name]
-                kwargs.update({
-                    'depth': self.depth - 1,
-                    'model_field': model_field
-                })
-
-                if not is_drfme_field(model_field):
-                    kwargs = self.remove_drfme_kwargs(kwargs)
+                kwargs = self.get_subfield_kwargs(model_field)
                 #create the serializer field for this model_field
                 field = get_field_mapping(model_field)(**kwargs)
 
@@ -121,14 +148,17 @@ class ReferenceField(DocumentField):
         if value is None:
             return None
 
-        if isinstance(value, DBRef):
-            return smart_str(value.id)
-        else:
+        if self.depth and self.dereference_refs:
             #get model's fields
             ret = OrderedDict()
             for field_name in value._fields:
                 ret[field_name] = self.child_fields[field_name].to_representation(getattr(value, field_name))
             return ret
+        elif isinstance(value, DBRef):
+            return smart_str(value.id)
+        else:
+            return smart_str(value)
+
 
 
 class ListField(DocumentField):
@@ -141,14 +171,7 @@ class ListField(DocumentField):
         #instantiate the nested field
         nested_field_instance = self.model_field.field
 
-        if is_drfme_field(nested_field_instance):
-            #update kwargs to include data from this layer.
-            kwargs.update({
-                'model_field': nested_field_instance
-            })
-        else:
-            #if nested class isn't a DocumentField, remove all the kwargs that may break it.
-            kwargs = self.remove_drfme_kwargs(kwargs)
+        kwargs = self.get_subfield_kwargs(nested_field_instance)
 
         #initialize field
         self.nested_field = get_field_mapping(nested_field_instance)(**kwargs)
@@ -227,13 +250,8 @@ class EmbeddedDocumentField(DocumentField):
             self.child_fields = {}
             for field_name in field_info.fields:
                 model_field = field_info.fields[field_name]
-                kwargs.update({
-                    'depth': self.depth if self.ignore_depth else self.depth - 1,
-                    'model_field': model_field
-                })
+                kwargs = self.get_subfield_kwargs(model_field)
 
-                if not is_drfme_field(model_field):
-                    kwargs = self.remove_drfme_kwargs(kwargs)
                 #create the serializer field for this model_field
                 field = get_field_mapping(model_field)(**kwargs)
                 field.bind("field_name", self)
