@@ -14,8 +14,8 @@ from rest_framework import fields as drf_fields
 from rest_framework.fields import SkipField
 from rest_framework_mongoengine.utils import get_field_info
 from rest_framework_mongoengine.fields import (ReferenceField, ListField, EmbeddedDocumentField, DynamicField,
-                                               ObjectIdField, DocumentField, BinaryField, BaseGeoField, DRFME_FIELD_MAPPING)
-from rest_framework_mongoengine.fields import ME_FIELD_MAPPING, DRFME_FIELD_MAPPING
+                                               ObjectIdField, DocumentField, BinaryField, BaseGeoField, get_field_mapping, is_drfme_field)
+from rest_framework_mongoengine.fields import ME_FIELD_MAPPING
 import copy
 
 
@@ -127,7 +127,6 @@ class DocumentSerializer(serializers.ModelSerializer):
             raise AssertionError('You should set `model` attribute on %s.' % type(self).__name__)
 
     MAX_RECURSION_DEPTH = 5  # default value of depth
-    field_mapping = ME_FIELD_MAPPING
 
     embedded_document_serializer_fields = []
 
@@ -144,7 +143,7 @@ class DocumentSerializer(serializers.ModelSerializer):
         #kwargs to pass to all drfme fields
         #this includes lists, dicts, embedded documents, etc
         #depth included for flow control during recursive serialization.
-        if issubclass(ME_FIELD_MAPPING[model_field.__class__], DocumentField):
+        if is_drfme_field(model_field):
             kwargs['model_field'] = model_field
             kwargs['depth'] = getattr(self.Meta, 'depth', self.MAX_RECURSION_DEPTH)
 
@@ -152,9 +151,6 @@ class DocumentSerializer(serializers.ModelSerializer):
             kwargs['required'] = False
         else:
             kwargs['required'] = model_field.required
-
-        if type(model_field) is me_fields.EmbeddedDocumentField:
-            kwargs['document_type'] = model_field.document_type
 
         if model_field.default:
             kwargs['required'] = False
@@ -262,9 +258,8 @@ class DocumentSerializer(serializers.ModelSerializer):
             elif field_name in info.fields_and_pk:
                 # Create regular model fields.
                 model_field = info.fields_and_pk[field_name]
-                try:
-                    field_cls = self.field_mapping[model_field.__class__]
-                except KeyError:
+                field_cls = get_field_mapping(model_field)
+                if field_cls is None:
                     raise KeyError('%s is not supported, yet. Please open a ticket regarding '
                                    'this issue and have it fixed asap.\n'
                                    'https://github.com/umutbozkurt/django-rest-framework-mongoengine/issues/' %

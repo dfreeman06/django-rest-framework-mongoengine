@@ -5,7 +5,8 @@ from rest_framework import serializers
 from bson.errors import InvalidId
 from bson import DBRef, ObjectId
 
-import json
+import numbers
+import inspect
 
 from mongoengine import dereference
 from mongoengine.base.document import BaseDocument
@@ -32,7 +33,6 @@ class DocumentField(serializers.Field):
     type_label = 'DocumentField'
 
     def __init__(self, *args, **kwargs):
-        self.field_mapping = ME_FIELD_MAPPING
 
         self.depth = kwargs.pop('depth')
         #hotwire
@@ -84,10 +84,10 @@ class ReferenceField(DocumentField):
                     'model_field': model_field
                 })
 
-                if model_field.__class__ not in DRFME_FIELD_MAPPING:
+                if not is_drfme_field(model_field):
                     kwargs = self.remove_drfme_kwargs(kwargs)
                 #create the serializer field for this model_field
-                field = self.field_mapping[model_field.__class__](**kwargs)
+                field = get_field_mapping(model_field)(**kwargs)
 
                 self.child_fields[field_name] = field
 
@@ -137,20 +137,18 @@ class ListField(DocumentField):
 
         #instantiate the nested field
         nested_field_instance = self.model_field.field
-        nested_field_cls = nested_field_instance.__class__
 
-        kwargs.update({
-            'model_field': nested_field_instance
-        })
-        if self.field_mapping[nested_field_cls] in (EmbeddedDocumentField, ):
-            #if the nested field is an embedded document, pass along its document_type
-            kwargs['document_type'] = nested_field_instance.document_type
-        elif not issubclass(self.field_mapping[nested_field_cls], DocumentField):
+        if is_drfme_field(nested_field_instance):
+            #update kwargs to include data from this layer.
+            kwargs.update({
+                'model_field': nested_field_instance
+            })
+        else:
             #if nested class isn't a DocumentField, remove all the kwargs that may break it.
             kwargs = self.remove_drfme_kwargs(kwargs)
 
         #initialize field
-        self.nested_field = self.field_mapping[nested_field_cls](**kwargs)
+        self.nested_field = get_field_mapping(nested_field_instance)(**kwargs)
         #and bind it, since that isn't being handled by the Serializer's BindingDict
         self.nested_field.bind('', self)
 
@@ -216,12 +214,9 @@ class EmbeddedDocumentField(DocumentField):
 
     def __init__(self, *args, **kwargs):
         self.ignore_depth = True #set this from a kwarg!
-        try:
-            self.document_type = kwargs.pop('document_type')
-        except KeyError:
-            raise ValueError("EmbeddedDocumentField requires 'document_type' kwarg")
 
         super(EmbeddedDocumentField, self).__init__(*args, **kwargs)
+        self.document_type = self.model_field.document_type
 
         #if depth is going to require we recurse, build a list of the embedded document's fields.
         if self.depth or self.ignore_depth:
@@ -233,14 +228,11 @@ class EmbeddedDocumentField(DocumentField):
                     'depth': self.depth if self.ignore_depth else self.depth - 1,
                     'model_field': model_field
                 })
-                if self.field_mapping[model_field.__class__] in (EmbeddedDocumentField, ):
-                    #if the nested field is an embedded document, pass along its document_type
-                    kwargs['document_type'] = model_field.document_type
 
-                if model_field.__class__ not in DRFME_FIELD_MAPPING:
+                if not is_drfme_field(model_field):
                     kwargs = self.remove_drfme_kwargs(kwargs)
                 #create the serializer field for this model_field
-                field = self.field_mapping[model_field.__class__](**kwargs)
+                field = get_field_mapping(model_field)(**kwargs)
                 field.bind("field_name", self)
 
                 self.child_fields[field_name] = field
@@ -286,13 +278,9 @@ class DynamicField(DocumentField):
         if source:
             self.source_attrs = self.source.split('.')
 
-    def get_attribute(self, instance):
-        #go ahead and get data from the source
-        return instance._data[self.source]
-
     def to_representation(self, value):
         #probably should do something a bit smarter?
-        return smart_str(value)
+        return self.model_field.to_python(value)
 
 
 class ObjectIdField(DocumentField):
@@ -327,6 +315,38 @@ class BinaryField(DocumentField):
 class BaseGeoField(DocumentField):
 
     type_label = 'BaseGeoField'
+
+def is_drfme_field(field):
+    """
+    :param field: Model field instance (or class)
+    :return: True if field maps to a subclass of DocumentField, otherwise returns False.
+    """
+
+    #We will need the field class to look it up, so make sure we weren't passed one initially
+    #and convert it if needed.
+    if not isinstance(field, type):
+        field = type(field)
+
+    #if this is a key in DRFME_FIELD_MAPPING, return True
+    if field in DRFME_FIELD_MAPPING:
+        return True
+    elif set(inspect.getmro(field)).intersection(DRFME_FIELD_MAPPING.keys()):
+        #if the set of field's parent classes has an intersection with the keys in DRFME_FIELD_MAPPING
+        #i.e. One of our parent classes is a type that needs handling with a DocumentField
+        return True
+    return False
+
+def get_field_mapping(field):
+    #given a field, look up the proper default drf or drf-me field
+
+    #convert to class, if we're passed an instance, as above.
+    if not isinstance(field, type):
+        field = type(field)
+
+    for cls in inspect.getmro(field):
+        if cls in ME_FIELD_MAPPING:
+            return ME_FIELD_MAPPING[cls]
+    return None
 
 DRFME_FIELD_MAPPING = {
     me_fields.ObjectIdField: ObjectIdField,
