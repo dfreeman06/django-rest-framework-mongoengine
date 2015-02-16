@@ -173,6 +173,10 @@ class DocumentSerializer(serializers.ModelSerializer):
                 if hasattr(model_field, attribute):
                     kwargs.update({attribute: getattr(model_field, attribute)})
 
+        if model_field.__class__ is me_fields.StringField:
+            kwargs['allow_null'] = not kwargs['required']
+            kwargs['allow_blank'] = not kwargs['required']
+
         return kwargs
 
     def get_field_info(self, model):
