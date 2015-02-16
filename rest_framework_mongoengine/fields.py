@@ -35,12 +35,13 @@ class DocumentField(serializers.Field):
     def __init__(self, *args, **kwargs):
 
         self.depth = kwargs.pop('depth')
-        #hotwire
-        self.depth = 0
         try:
             self.model_field = kwargs.pop('model_field')
         except KeyError:
             raise ValueError("%s requires 'model_field' kwarg" % self.type_label)
+
+        #better hotwire.
+        self.dereference_refs = False
 
         super(DocumentField, self).__init__(*args, **kwargs)
 
@@ -74,7 +75,7 @@ class ReferenceField(DocumentField):
         self.model_cls = self.model_field.document_type
 
         #if depth is going to require we recurse, build a list of the child document's fields.
-        if self.depth:
+        if self.depth and self.dereference_refs:
             field_info = get_field_info(self.model_cls)
             self.child_fields = {}
             for field_name in field_info.fields_and_pk:
@@ -104,11 +105,13 @@ class ReferenceField(DocumentField):
         #need to overwrite this, since drf's version
         #will call get_attr(instance, field_name), which dereferences ReferenceFields
         #even if we don't need them. We need it to be mindful of depth.
-        if not self.depth:
-            #return dbref by grabbing data directly, instead of going through the ReferenceField's __get__ method
-            return instance._data[self.source]
+        if self.depth and self.dereference_refs:
+            #TODO: fix to iterate properly?
+            return super(DocumentField, self).get_attribute(instance)
 
-        return super(DocumentField, self).get_attribute(instance)
+        #return dbref by grabbing data directly, instead of going through the ReferenceField's __get__ method
+        return instance._data[self.source]
+
 
 
     def to_representation(self, value):
@@ -174,7 +177,7 @@ class ListField(DocumentField):
 
     def get_attribute(self, instance):
         #since this is a passthrough, be careful about dereferencing the contents.
-        if not self.depth:
+        if not self.dereference_refs and isinstance(self.nested_field, ReferenceField):
             #return data by grabbing it directly, instead of going through the field's __get__ method
             return instance._data[self.source]
         return super(DocumentField, self).get_attribute(instance)
@@ -213,7 +216,7 @@ class EmbeddedDocumentField(DocumentField):
     type_label = 'EmbeddedDocumentField'
 
     def __init__(self, *args, **kwargs):
-        self.ignore_depth = True #set this from a kwarg!
+        self.ignore_depth = False #set this from a kwarg!
 
         super(EmbeddedDocumentField, self).__init__(*args, **kwargs)
         self.document_type = self.model_field.document_type

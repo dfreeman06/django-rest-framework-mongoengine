@@ -2,6 +2,7 @@ from __future__ import unicode_literals
 
 from mongoengine.errors import ValidationError as me_ValidationError
 from mongoengine import fields as me_fields
+from mongoengine.base.common import get_document
 
 from django.db import models
 from django.forms import widgets
@@ -12,7 +13,7 @@ from collections import OrderedDict
 from rest_framework import serializers
 from rest_framework import fields as drf_fields
 from rest_framework.fields import SkipField
-from rest_framework_mongoengine.utils import get_field_info
+from rest_framework_mongoengine.utils import get_field_info, FieldInfo
 from rest_framework_mongoengine.fields import (ReferenceField, ListField, EmbeddedDocumentField, DynamicField,
                                                ObjectIdField, DocumentField, BinaryField, BaseGeoField, get_field_mapping, is_drfme_field)
 from rest_framework_mongoengine.fields import ME_FIELD_MAPPING
@@ -173,6 +174,9 @@ class DocumentSerializer(serializers.ModelSerializer):
 
         return kwargs
 
+    def get_field_info(self, model):
+        return get_field_info(model)
+
     def get_fields(self):
         #fields declared on Serializer (e.g. Name = CharField() in class definition)
         declared_fields = copy.deepcopy(self._declared_fields)
@@ -206,7 +210,7 @@ class DocumentSerializer(serializers.ModelSerializer):
         assert not (fields and exclude), "Cannot set both 'fields' and 'exclude'."
 
         # # Retrieve metadata about fields & relationships on the model class.
-        info = get_field_info(model)
+        info = self.get_field_info(model)
 
         # Use the default set of field names if none is supplied explicitly.
         if fields is None:
@@ -417,6 +421,56 @@ class DocumentSerializer(serializers.ModelSerializer):
 
         return super(DocumentSerializer, self).update(instance, validated_data)
 
+class PolymorphicDocumentSerializer(DocumentSerializer):
+
+    def get_field_info(self, model):
+
+        subcls_info = {}
+        for cls in model._subclasses:
+            subcls_info[cls] = get_field_info(get_document(cls))
+
+        ret = get_field_info(model)
+        for cls_info in subcls_info.values():
+            for field in cls_info.fields:
+                if field not in ret.fields:
+                    ret.fields[field] = cls_info.fields[field]
+
+        ret.fields_and_pk.update(ret.fields)
+        return ret
+
+    def to_representation(self, instance):
+        """
+        Object instance -> Dict of primitive datatypes.
+        """
+        #instantiate return dict
+        ret = OrderedDict()
+
+        #get list of fields from self.fields.values()
+        fields = {}
+        for field_name, field in self.fields.iteritems():
+            if not field.write_only:
+                fields[field_name] = field
+
+        for field_name in instance._fields:
+            if field_name in fields:
+                try:
+                    #get attribute from field
+                    #probably primitive datatype for simple fields (text, int, etc)
+                    #possibly something more complicated for objects, lists, or whatnot.
+                    attribute = fields[field_name].get_attribute(instance)
+                except SkipField:
+                    continue
+
+                if attribute is None:
+                    # We skip `to_representation` for `None` values so that
+                    # fields do not have to explicitly deal with that case.
+                    ret[fields[field_name].field_name] = None
+                else:
+                    #pass the attribute to the to_representation function to get final representation
+                    #of the data.
+                    ret[fields[field_name].field_name] = fields[field_name].to_representation(attribute)
+
+        return ret
 
 class DynamicDocumentSerializer(DocumentSerializer):
     """
