@@ -261,7 +261,10 @@ class EmbeddedDocumentField(DocumentField):
             #get model's fields
             ret = OrderedDict()
             for field_name in self.child_fields:
-                ret[field_name] = self.child_fields[field_name].to_representation(value._data[field_name])
+                if value._data[field_name] is None:
+                    ret[field_name] = None
+                else:
+                    ret[field_name] = self.child_fields[field_name].to_representation(value._data[field_name])
             return ret
         else:
             return "<<Embedded Document (Maximum recursion depth exceeded)>>"

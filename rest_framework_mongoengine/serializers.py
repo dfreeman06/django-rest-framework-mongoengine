@@ -170,7 +170,8 @@ class DocumentSerializer(serializers.ModelSerializer):
         if model_field.__class__ in attribute_dict:
             attributes = attribute_dict[model_field.__class__]
             for attribute in attributes:
-                kwargs.update({attribute: getattr(model_field, attribute)})
+                if hasattr(model_field, attribute):
+                    kwargs.update({attribute: getattr(model_field, attribute)})
 
         return kwargs
 
