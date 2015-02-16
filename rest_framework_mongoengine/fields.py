@@ -186,6 +186,30 @@ class ListField(DocumentField):
         return [self.nested_field.to_representation(v) for v in value]
 
 
+class MapField(ListField):
+    type_label = "MapField"
+
+    def to_internal_value(self, data):
+        """
+        List of dicts of native values <- List of dicts of primitive datatypes.
+        """
+        if html.is_html_input(data):
+            data = html.parse_html_list(data)
+        if isinstance(data, type('')) or not hasattr(data, '__iter__'):
+            self.fail('not_a_dict', input_type=type(data).__name__)
+
+        native = OrderedDict()
+        for key in data:
+            native[key] = self.nested_field.run_validation(data[key])
+        return native
+
+    def to_representation(self, value):
+
+        ret = OrderedDict()
+        for key in value:
+            ret[key] = self.nested_field.to_representation(value[key])
+        return ret
+
 class EmbeddedDocumentField(DocumentField):
 
     type_label = 'EmbeddedDocumentField'
@@ -311,6 +335,7 @@ DRFME_FIELD_MAPPING = {
     me_fields.EmbeddedDocumentField: EmbeddedDocumentField,
     me_fields.DynamicField: DynamicField,
     me_fields.DictField: DocumentField,
+    me_fields.MapField: MapField,
     me_fields.BinaryField: BinaryField,
     me_fields.GeoPointField: BaseGeoField,
     me_fields.PointField: BaseGeoField,
