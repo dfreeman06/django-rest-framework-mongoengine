@@ -225,7 +225,8 @@ class DocumentSerializer(serializers.ModelSerializer):
             #if serializer lists fields to exclude, drop them from the list.
             if exclude is not None:
                 for field_name in exclude:
-                    fields.remove(field_name)
+                    if field_name in fields:
+                        fields.remove(field_name)
 
 
         # Determine the set of model fields, and the fields that they map to.
@@ -456,14 +457,15 @@ class PolymorphicDocumentSerializer(DocumentSerializer):
             if not field.write_only:
                 fields[field_name] = field
 
-        for field_name in instance._fields:
-            if field_name in fields:
+        for field_name in fields:
+            field = fields[field_name]
+            if field_name in self._declared_fields or field.source in instance._fields:
                 try:
                     #get attribute from field
                     #probably primitive datatype for simple fields (text, int, etc)
                     #possibly something more complicated for objects, lists, or whatnot.
-                    attribute = fields[field_name].get_attribute(instance)
-                except SkipField:
+                    attribute = field.get_attribute(instance)
+                except (SkipField):
                     continue
 
                 if attribute is None:
