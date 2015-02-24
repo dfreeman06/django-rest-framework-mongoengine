@@ -13,6 +13,8 @@ from mongoengine import dereference
 from mongoengine.base.document import BaseDocument
 from mongoengine.document import Document, EmbeddedDocument
 from mongoengine.fields import ObjectId
+from mongoengine.base import get_document, _document_registry
+from mongoengine.errors import NotRegistered
 
 from collections import OrderedDict
 
@@ -337,8 +339,11 @@ class DictField(DocumentField):
 
         for key in value:
             item = value[key]
-            if isinstance(item, BaseDocument):
+
+            if isinstance(item, DBRef):
+                #DBRef, so this is a model.
                 if self.depth and not self.ignore_depth:
+                    #have depth, we must go deeper.
                     #serialize-on-the-fly! (patent pending)
                     cls = item.__class__
                     if type(cls) not in self.serializers:
@@ -349,15 +354,23 @@ class DictField(DocumentField):
                     for field in fields:
                         field_value = item._data[field]
                         sub_ret[field] = fields[field].to_representation(field_value)
-
                     ret[key] = sub_ret
                 else:
-                    #out of depth.
-                    ret[key] = "OUT OF DEPTH"
-            elif isinstance(item, DBRef):
-                ret[key] = smart_str(item.id)
+                    #no depth, so just pretty-print the dbref.
+                    ret[key] = smart_str(item.id)
+            elif '_cls' in item and item['_cls'] in _document_registry:
+                #has _cls, isn't a dbref, but is in the document registry - should be an embedded document.
+                if self.depth and not self.ignore_depth:
+                    cls = get_document(item['_cls'])
+                    field = get_field_mapping(me_fields.EmbeddedDocumentField)
+                else:
+                    #no depth, just print the something representing the EmbeddedDocument.
+                    cls = item['_cls']
+
             else:
+                #not a document or embedded document, just return the value.
                 ret[key] = item
+
         if len(ret):
             raise undead
         return ret
