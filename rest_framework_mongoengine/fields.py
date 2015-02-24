@@ -7,6 +7,7 @@ from bson import DBRef, ObjectId
 
 import numbers
 import inspect
+import json
 
 from mongoengine import dereference
 from mongoengine.base.document import BaseDocument
@@ -44,6 +45,17 @@ class DocumentField(serializers.Field):
         self.dereference_refs = False
 
         super(DocumentField, self).__init__(*args, **kwargs)
+
+    def get_subfields(self, model):
+        model_fields = model._fields
+        fields = {}
+        for field_name in model_fields:
+            fields[field_name] = self.get_subfield(model_fields[field_name])
+        return fields
+
+    def get_subfield(self, model_field):
+        kwargs = self.get_subfield_kwargs(model_field)
+        return get_field_mapping(model_field)(**kwargs)
 
     def get_subfield_kwargs(self, subfield):
         """
@@ -113,9 +125,9 @@ class ReferenceField(DocumentField):
             self.child_fields = {}
             for field_name in field_info.fields_and_pk:
                 model_field = field_info.fields_and_pk[field_name]
-                kwargs = self.get_subfield_kwargs(model_field)
+
                 #create the serializer field for this model_field
-                field = get_field_mapping(model_field)(**kwargs)
+                field = self.get_subfield(model_field)
 
                 self.child_fields[field_name] = field
 
@@ -171,10 +183,8 @@ class ListField(DocumentField):
         #instantiate the nested field
         nested_field_instance = self.model_field.field
 
-        kwargs = self.get_subfield_kwargs(nested_field_instance)
-
         #initialize field
-        self.nested_field = get_field_mapping(nested_field_instance)(**kwargs)
+        self.nested_field = self.get_subfield(nested_field_instance)
         #and bind it, since that isn't being handled by the Serializer's BindingDict
         self.nested_field.bind('', self)
 
@@ -250,10 +260,9 @@ class EmbeddedDocumentField(DocumentField):
             self.child_fields = {}
             for field_name in field_info.fields:
                 model_field = field_info.fields[field_name]
-                kwargs = self.get_subfield_kwargs(model_field)
 
                 #create the serializer field for this model_field
-                field = get_field_mapping(model_field)(**kwargs)
+                field = self.get_subfield(model_field)
                 field.bind("field_name", self)
 
                 self.child_fields[field_name] = field
@@ -305,6 +314,56 @@ class DynamicField(DocumentField):
     def to_representation(self, value):
         #probably should do something a bit smarter?
         return self.model_field.to_python(value)
+
+
+
+class DictField(DocumentField):
+
+    type_label = "DictField"
+    serializers = {}
+
+    def __init__(self, *args, **kwargs):
+        self.ignore_depth = False #set this from a kwarg!
+
+        super(DictField, self).__init__(*args, **kwargs)
+
+    def get_attribute(self, instance):
+
+        #return dict as provided by the instance.
+        return instance._data[self.source]
+
+    def to_representation(self, value):
+        ret = OrderedDict()
+
+        for key in value:
+            item = value[key]
+            if isinstance(item, BaseDocument):
+                if self.depth and not self.ignore_depth:
+                    #serialize-on-the-fly! (patent pending)
+                    cls = item.__class__
+                    if type(cls) not in self.serializers:
+                        self.serializers[cls] = self.get_subfields(cls)
+                    fields = self.serializers[cls]
+
+                    sub_ret = OrderedDict()
+                    for field in fields:
+                        field_value = item._data[field]
+                        sub_ret[field] = fields[field].to_representation(field_value)
+
+                    ret[key] = sub_ret
+                else:
+                    #out of depth.
+                    ret[key] = "OUT OF DEPTH"
+            elif isinstance(item, DBRef):
+                ret[key] = smart_str(item.id)
+            else:
+                ret[key] = item
+        if len(ret):
+            raise undead
+        return ret
+
+    def to_internal_value(self, data):
+        return self.model_field.to_python(data)
 
 
 class ObjectIdField(DocumentField):
@@ -378,7 +437,7 @@ DRFME_FIELD_MAPPING = {
     me_fields.ListField: ListField,
     me_fields.EmbeddedDocumentField: EmbeddedDocumentField,
     me_fields.DynamicField: DynamicField,
-    me_fields.DictField: DocumentField,
+    me_fields.DictField: DictField,
     me_fields.MapField: MapField,
     me_fields.BinaryField: BinaryField,
     me_fields.GeoPointField: BaseGeoField,
