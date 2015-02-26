@@ -9,7 +9,7 @@ import numbers
 import inspect
 import json
 
-from mongoengine import dereference
+from mongoengine.dereference import DeReference
 from mongoengine.base.document import BaseDocument
 from mongoengine.document import Document, EmbeddedDocument
 from mongoengine.fields import ObjectId
@@ -345,6 +345,7 @@ class DictField(DocumentField):
                 if self.depth and not self.ignore_depth:
                     #have depth, we must go deeper.
                     #serialize-on-the-fly! (patent pending)
+                    item = DeReference()([item])[0]
                     cls = item.__class__
                     if type(cls) not in self.serializers:
                         self.serializers[cls] = self.get_subfields(cls)
@@ -358,21 +359,36 @@ class DictField(DocumentField):
                 else:
                     #no depth, so just pretty-print the dbref.
                     ret[key] = smart_str(item.id)
-            elif '_cls' in item and item['_cls'] in _document_registry:
+            elif isinstance(item, dict) and '_cls' in item and item['_cls'] in _document_registry:
                 #has _cls, isn't a dbref, but is in the document registry - should be an embedded document.
                 if self.depth and not self.ignore_depth:
                     cls = get_document(item['_cls'])
-                    field = get_field_mapping(me_fields.EmbeddedDocumentField)
+                    #instantiate EmbeddedDocument object
+                    item = cls._from_son(item)
+
+                    #get serializer fields from cache, or make them if needed.
+                    if type(cls) not in self.serializers:
+                        self.serializers[cls] = self.get_subfields(cls)
+                    fields = self.serializers[cls]
+
+                    #iterate.
+                    sub_ret = OrderedDict()
+                    for field in fields:
+                        field_value = item._data[field]
+                        sub_ret[field] = fields[field].to_representation(field_value)
+                    ret[key] = sub_ret
+
                 else:
                     #no depth, just print the something representing the EmbeddedDocument.
                     cls = item['_cls']
+                    ret[key] = "Embedded Document " + cls + " (out of depth)"
 
             else:
                 #not a document or embedded document, just return the value.
                 ret[key] = item
 
-        if len(ret):
-            raise undead
+        #if len(ret):
+        #    raise undead
         return ret
 
     def to_internal_value(self, data):
