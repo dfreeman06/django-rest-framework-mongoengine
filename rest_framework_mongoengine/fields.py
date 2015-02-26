@@ -38,6 +38,7 @@ class DocumentField(serializers.Field):
     def __init__(self, *args, **kwargs):
 
         self.depth = kwargs.pop('depth')
+        self.ignore_depth = False #set this from a kwarg!
         try:
             self.model_field = kwargs.pop('model_field')
         except KeyError:
@@ -99,6 +100,13 @@ class DocumentField(serializers.Field):
 
         return kwargs
 
+    def go_deeper(self, is_ref=False):
+        #true if we should go deeper in subfields or not.
+        if is_ref:
+            return self.depth and self.dereference_refs
+        else:
+            return self.depth or self.ignore_depth
+
     def to_internal_value(self, data):
         return self.model_field.to_python(data)
 
@@ -122,7 +130,7 @@ class ReferenceField(DocumentField):
         self.model_cls = self.model_field.document_type
 
         #if depth is going to require we recurse, build a list of the child document's fields.
-        if self.depth and self.dereference_refs:
+        if self.go_deeper(is_ref=True):
             field_info = get_field_info(self.model_cls)
             self.child_fields = {}
             for field_name in field_info.fields_and_pk:
@@ -146,7 +154,7 @@ class ReferenceField(DocumentField):
         #need to overwrite this, since drf's version
         #will call get_attr(instance, field_name), which dereferences ReferenceFields
         #even if we don't need them. We need it to be mindful of depth.
-        if self.depth and self.dereference_refs:
+        if self.go_deeper(is_ref=True):
             #TODO: fix to iterate properly?
             return super(DocumentField, self).get_attribute(instance)
 
@@ -162,7 +170,7 @@ class ReferenceField(DocumentField):
         if value is None:
             return None
 
-        if self.depth and self.dereference_refs:
+        if self.go_deeper(is_ref=True):
             #get model's fields
             ret = OrderedDict()
             for field_name in value._fields:
@@ -251,13 +259,12 @@ class EmbeddedDocumentField(DocumentField):
     type_label = 'EmbeddedDocumentField'
 
     def __init__(self, *args, **kwargs):
-        self.ignore_depth = False #set this from a kwarg!
 
         super(EmbeddedDocumentField, self).__init__(*args, **kwargs)
         self.document_type = self.model_field.document_type
 
         #if depth is going to require we recurse, build a list of the embedded document's fields.
-        if self.depth or self.ignore_depth:
+        if self.go_deeper():
             field_info = get_field_info(self.document_type)
             self.child_fields = {}
             for field_name in field_info.fields:
@@ -273,7 +280,7 @@ class EmbeddedDocumentField(DocumentField):
         #return dict of whatever our fields pass back to us..
         ret = OrderedDict()
 
-        if self.depth or self.ignore_depth:
+        if self.go_deeper():
             for field_name in self.child_fields:
                 field = self.child_fields[field_name]
                 ret[field_name] = field.get_attribute(instance[self.source])
@@ -286,7 +293,7 @@ class EmbeddedDocumentField(DocumentField):
     def to_representation(self, value):
         if value is None:
             return None
-        elif self.depth or self.ignore_depth:
+        elif self.go_deeper():
             #get model's fields
             ret = OrderedDict()
             for field_name in self.child_fields:
@@ -325,8 +332,6 @@ class DictField(DocumentField):
     serializers = {}
 
     def __init__(self, *args, **kwargs):
-        self.ignore_depth = False #set this from a kwarg!
-
         super(DictField, self).__init__(*args, **kwargs)
 
     def get_attribute(self, instance):
@@ -342,7 +347,7 @@ class DictField(DocumentField):
 
             if isinstance(item, DBRef):
                 #DBRef, so this is a model.
-                if self.depth and not self.ignore_depth:
+                if self.go_deeper():
                     #have depth, we must go deeper.
                     #serialize-on-the-fly! (patent pending)
                     item = DeReference()([item])[0]
@@ -361,7 +366,7 @@ class DictField(DocumentField):
                     ret[key] = smart_str(item.id)
             elif isinstance(item, dict) and '_cls' in item and item['_cls'] in _document_registry:
                 #has _cls, isn't a dbref, but is in the document registry - should be an embedded document.
-                if self.depth and not self.ignore_depth:
+                if self.go_deeper():
                     cls = get_document(item['_cls'])
                     #instantiate EmbeddedDocument object
                     item = cls._from_son(item)
