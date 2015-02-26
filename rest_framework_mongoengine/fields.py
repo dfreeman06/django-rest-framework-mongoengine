@@ -320,9 +320,12 @@ class DynamicField(DocumentField):
         if source:
             self.source_attrs = self.source.split('.')
 
+    def get_attribute(self, instance):
+        return instance._data[self.source]
+
     def to_representation(self, value):
-        #probably should do something a bit smarter?
-        return self.model_field.to_python(value)
+        raise undead
+
 
 
 
@@ -347,7 +350,7 @@ class DictField(DocumentField):
 
             if isinstance(item, DBRef):
                 #DBRef, so this is a model.
-                if self.go_deeper():
+                if self.go_deeper(is_ref=True):
                     #have depth, we must go deeper.
                     #serialize-on-the-fly! (patent pending)
                     item = DeReference()([item])[0]
