@@ -312,6 +312,7 @@ class EmbeddedDocumentField(DocumentField):
 class DynamicField(DocumentField):
 
     type_label = 'DynamicField'
+    serializers = {}
 
     def __init__(self, field_name=None, source=None, *args, **kwargs):
         super(DynamicField, self).__init__(*args, **kwargs)
@@ -324,7 +325,43 @@ class DynamicField(DocumentField):
         return instance._data[self.source]
 
     def to_representation(self, value):
-        raise undead
+
+        if isinstance(value, Document):
+            #Will not get DBRefs thanks to how MongoEngine handles DynamicFields
+            #but, respect depth anyways.
+            if self.go_deeper(is_ref=True):
+                cls = type(value)
+                if type(cls) not in self.serializers:
+                    self.serializers[cls] = self.get_subfields(cls)
+                fields = self.serializers[cls]
+
+                ret = OrderedDict()
+                for field in fields:
+                    field_value = value._data[field]
+                    ret[field] = fields[field].to_representation(field_value)
+                return ret
+            else:
+                #out of depth
+                return smart_str(value.id)
+        elif isinstance(value, EmbeddedDocument):
+            if self.go_deeper():
+                cls = type(value)
+                if type(cls) not in self.serializers:
+                    self.serializers[cls] = self.get_subfields(cls)
+                fields = self.serializers[cls]
+
+                ret = OrderedDict()
+                for field in fields:
+                    field_value = value._data[field]
+                    ret[field] = fields[field].to_representation(field_value)
+                return ret
+            else:
+                #out of depth
+                return "%s Object: Out of Depth" % type(value).__name__
+
+        else:
+            #some other type of value.
+            return value
 
 
 
