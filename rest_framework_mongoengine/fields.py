@@ -172,11 +172,14 @@ class ReferenceField(DocumentField):
 
         if self.go_deeper(is_ref=True):
             #get model's fields
+            #if go_deeper returns true, we've already dereferenced this in get_attribute.
             ret = OrderedDict()
             for field_name in value._fields:
                 ret[field_name] = self.child_fields[field_name].to_representation(getattr(value, field_name))
             return ret
-        elif isinstance(value, DBRef):
+        elif isinstance(value, (DBRef, Document)):
+            #don't want to go deeper, and have either a DBRef or a document
+            #we'll have a document on POSTs/PUTs, or if something else has dereferenced it for us.
             return smart_str(value.id)
         else:
             return smart_str(value)
