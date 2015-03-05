@@ -58,7 +58,7 @@ class DocumentField(serializers.Field):
 
     def get_subfield(self, model_field):
         kwargs = self.get_subfield_kwargs(model_field)
-        return get_field_mapping(model_field)(**kwargs)
+        return self.get_field_mapping(model_field)(**kwargs)
 
     def get_subfield_kwargs(self, subfield):
         """
@@ -106,6 +106,18 @@ class DocumentField(serializers.Field):
             return self.depth and self.dereference_refs
         else:
             return self.depth or self.ignore_depth
+
+    def get_field_mapping(self, field):
+        #query parent to get field mapping.
+        #Since this is implemented in the serializer and in DocumentField
+        #we'll pass this up the chain until we get to the serializer, where it can be easily configured.
+        assert hasattr(self, 'parent'), (
+            "%s Field has no parent attribute"
+            "field.bind probably did not get called." %
+            (self.field_name)
+        )
+
+        return self.parent.get_field_mapping(field)
 
     def to_internal_value(self, data):
         return self.model_field.to_python(data)

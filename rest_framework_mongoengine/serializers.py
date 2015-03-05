@@ -15,7 +15,8 @@ from rest_framework import fields as drf_fields
 from rest_framework.fields import SkipField
 from rest_framework_mongoengine.utils import get_field_info, FieldInfo
 from rest_framework_mongoengine.fields import (ReferenceField, ListField, EmbeddedDocumentField, DynamicField,
-                                               ObjectIdField, DocumentField, BinaryField, BaseGeoField, get_field_mapping, is_drfme_field)
+                                               ObjectIdField, DocumentField, BinaryField, BaseGeoField, DictField, MapField,
+                                               get_field_mapping, is_drfme_field)
 from rest_framework_mongoengine.fields import ME_FIELD_MAPPING
 import copy
 
@@ -122,12 +123,48 @@ class DocumentSerializer(serializers.ModelSerializer):
             - maybe a better way to implement transform_%s methods on fields.py
 
     """
+
+
+
     def __init__(self, instance=None, data=serializers.empty, **kwargs):
         super(DocumentSerializer, self).__init__(instance=instance, data=data, **kwargs)
         if not hasattr(self.Meta, 'model'):
             raise AssertionError('You should set `model` attribute on %s.' % type(self).__name__)
 
     MAX_RECURSION_DEPTH = 5  # default value of depth
+    field_mapping = {
+        me_fields.FloatField: drf_fields.FloatField,
+        me_fields.IntField: drf_fields.IntegerField,
+        me_fields.DateTimeField: drf_fields.DateTimeField,
+        me_fields.EmailField: drf_fields.EmailField,
+        me_fields.URLField: drf_fields.URLField,
+        me_fields.StringField: drf_fields.CharField,
+        me_fields.BooleanField: drf_fields.BooleanField,
+        me_fields.FileField: drf_fields.FileField,
+        me_fields.ImageField: drf_fields.ImageField,
+        me_fields.UUIDField: drf_fields.CharField,
+        me_fields.DecimalField: drf_fields.DecimalField
+    }
+
+    _drfme_field_mapping = {
+        me_fields.ObjectIdField: ObjectIdField,
+        me_fields.ReferenceField: ReferenceField,
+        me_fields.ListField: ListField,
+        me_fields.EmbeddedDocumentField: EmbeddedDocumentField,
+        me_fields.DynamicField: DynamicField,
+        me_fields.DictField: DictField,
+        me_fields.MapField: MapField,
+        me_fields.BinaryField: BinaryField,
+        me_fields.GeoPointField: BaseGeoField,
+        me_fields.PointField: BaseGeoField,
+        me_fields.PolygonField: BaseGeoField,
+        me_fields.LineStringField: BaseGeoField,
+    }
+
+    field_mapping.update(_drfme_field_mapping)
+
+    def get_field_mapping(self, field):
+        return get_field_mapping(field)
 
     embedded_document_serializer_fields = []
 
