@@ -22,6 +22,7 @@ from mongoengine import fields as me_fields
 from rest_framework import fields as drf_fields
 from rest_framework.fields import get_attribute, SkipField, empty
 from rest_framework.utils import html
+from rest_framework.utils.serializer_helpers import BindingDict
 
 from rest_framework_mongoengine.utils import get_field_info
 
@@ -38,18 +39,36 @@ class DocumentField(serializers.Field):
     def __init__(self, *args, **kwargs):
 
         self.depth = kwargs.pop('depth')
-        self.ignore_depth = False #set this from a kwarg!
+        self.ignore_depth = False  # set this from a kwarg!
         try:
             self.model_field = kwargs.pop('model_field')
         except KeyError:
             raise ValueError("%s requires 'model_field' kwarg" % self.type_label)
 
-        #better hotwire.
+        # better hotwire.
         self.dereference_refs = False
 
         super(DocumentField, self).__init__(*args, **kwargs)
 
-    def get_subfields(self, model):
+    @property
+    def fields(self):
+        """
+        A dictionary of {field_name: field_instance}.
+        """
+        # `fields` is evaluated lazily. We do this to ensure that we don't
+        # have issues importing modules that use ModelSerializers as fields,
+        # even if Django's app-loading stage has not yet run.
+        if not hasattr(self, '_fields'):
+            self._fields = BindingDict(self)
+            for key, value in self.get_fields().items():
+                self._fields[key] = value
+        return self._fields
+
+    def get_fields(self):
+        #handle dynamic/dict fields
+        return {}
+
+    def get_document_subfields(self, model):
         model_fields = model._fields
         fields = {}
         for field_name in model_fields:
@@ -141,17 +160,12 @@ class ReferenceField(DocumentField):
 
         self.model_cls = self.model_field.document_type
 
-        #if depth is going to require we recurse, build a list of the child document's fields.
+    def get_fields(self):
+        #return fields for all the subfields in this document.
+        #if we need to parse deeper, build a list of the child document's fields.
         if self.go_deeper(is_ref=True):
-            field_info = get_field_info(self.model_cls)
-            self.child_fields = {}
-            for field_name in field_info.fields_and_pk:
-                model_field = field_info.fields_and_pk[field_name]
-
-                #create the serializer field for this model_field
-                field = self.get_subfield(model_field)
-
-                self.child_fields[field_name] = field
+            return self.get_document_subfields(self.model_cls)
+        return {}
 
     def to_internal_value(self, data):
         try:
@@ -187,7 +201,7 @@ class ReferenceField(DocumentField):
             #if go_deeper returns true, we've already dereferenced this in get_attribute.
             ret = OrderedDict()
             for field_name in value._fields:
-                ret[field_name] = self.child_fields[field_name].to_representation(getattr(value, field_name))
+                ret[field_name] = self.fields[field_name].to_representation(getattr(value, field_name))
             return ret
         elif isinstance(value, (DBRef, Document)):
             #don't want to go deeper, and have either a DBRef or a document
@@ -202,16 +216,13 @@ class ListField(DocumentField):
 
     type_label = 'ListField'
 
-    def __init__(self, *args, **kwargs):
-        super(ListField, self).__init__(*args, **kwargs)
-
+    def get_fields(self):
         #instantiate the nested field
         nested_field_instance = self.model_field.field
-
         #initialize field
-        self.nested_field = self.get_subfield(nested_field_instance)
-        #and bind it, since that isn't being handled by the Serializer's BindingDict
-        self.nested_field.bind('', self)
+        return {
+            self.model_field.name: self.get_subfield(nested_field_instance)
+        }
 
     def get_value(self, dictionary):
         # We override the default field access in order to support
@@ -227,22 +238,27 @@ class ListField(DocumentField):
         """
         List of dicts of native values <- List of dicts of primitive datatypes.
         """
+
+        serializer_field = self.fields[self.model_field.name]
+
         if html.is_html_input(data):
             data = html.parse_html_list(data)
         if isinstance(data, type('')) or not hasattr(data, '__iter__'):
             self.fail('not_a_list', input_type=type(data).__name__)
-        return [self.nested_field.run_validation(item) for item in data]
+        return [serializer_field.run_validation(item) for item in data]
 
     def get_attribute(self, instance):
         #since this is a passthrough, be careful about dereferencing the contents.
-        if not self.dereference_refs and isinstance(self.nested_field, ReferenceField):
+        serializer_field = self.fields[self.model_field.name]
+        if not self.dereference_refs and isinstance(serializer_field, ReferenceField):
             #return data by grabbing it directly, instead of going through the field's __get__ method
             return instance._data[self.source]
         return super(DocumentField, self).get_attribute(instance)
 
 
     def to_representation(self, value):
-        return [self.nested_field.to_representation(v) for v in value]
+        serializer_field = self.fields[self.model_field.name]
+        return [serializer_field.to_representation(v) for v in value]
 
 
 class MapField(ListField):
@@ -252,6 +268,9 @@ class MapField(ListField):
         """
         List of dicts of native values <- List of dicts of primitive datatypes.
         """
+
+        serializer_field = self.fields[self.model_field.name]
+
         if html.is_html_input(data):
             data = html.parse_html_list(data)
         if isinstance(data, type('')) or not hasattr(data, '__iter__'):
@@ -259,45 +278,36 @@ class MapField(ListField):
 
         native = OrderedDict()
         for key in data:
-            native[key] = self.nested_field.run_validation(data[key])
+            native[key] = serializer_field.run_validation(data[key])
         return native
 
     def to_representation(self, value):
+        serializer_field = self.fields[self.model_field.name]
 
         ret = OrderedDict()
         for key in value:
-            ret[key] = self.nested_field.to_representation(value[key])
+            ret[key] = serializer_field.to_representation(value[key])
         return ret
 
 class EmbeddedDocumentField(DocumentField):
 
     type_label = 'EmbeddedDocumentField'
 
-    def __init__(self, *args, **kwargs):
-
-        super(EmbeddedDocumentField, self).__init__(*args, **kwargs)
+    def get_fields(self):
         self.document_type = self.model_field.document_type
 
-        #if depth is going to require we recurse, build a list of the embedded document's fields.
+        #if we need to recurse deeper, build a list of the embedded document's fields.
         if self.go_deeper():
-            field_info = get_field_info(self.document_type)
-            self.child_fields = {}
-            for field_name in field_info.fields:
-                model_field = field_info.fields[field_name]
-
-                #create the serializer field for this model_field
-                field = self.get_subfield(model_field)
-                field.bind("field_name", self)
-
-                self.child_fields[field_name] = field
+            return self.get_document_subfields(self.document_type)
+        return {}
 
     def get_attribute(self, instance):
         #return dict of whatever our fields pass back to us..
         ret = OrderedDict()
 
         if self.go_deeper():
-            for field_name in self.child_fields:
-                field = self.child_fields[field_name]
+            for field_name in self.fields:
+                field = self.fields[field_name]
                 ret[field_name] = field.get_attribute(instance[self.source])
             return ret
 
@@ -311,14 +321,15 @@ class EmbeddedDocumentField(DocumentField):
         elif self.go_deeper():
             #get model's fields
             ret = OrderedDict()
-            for field_name in self.child_fields:
+            for field_name in self.fields:
                 if value._data[field_name] is None:
                     ret[field_name] = None
                 else:
-                    ret[field_name] = self.child_fields[field_name].to_representation(value._data[field_name])
+                    ret[field_name] = self.fields[field_name].to_representation(value._data[field_name])
             return ret
         else:
-            return "<<Embedded Document (Maximum recursion depth exceeded)>>"
+            #should probably have a proper depth-specific error.
+            raise Exception("Ran out of depth serializing %s." % self.model_field.document_type)
 
     def to_internal_value(self, data):
         return self.model_field.to_python(data)
@@ -347,7 +358,7 @@ class DynamicField(DocumentField):
             if self.go_deeper(is_ref=True):
                 cls = type(value)
                 if type(cls) not in self.serializers:
-                    self.serializers[cls] = self.get_subfields(cls)
+                    self.serializers[cls] = self.get_document_subfields(cls)
                 fields = self.serializers[cls]
 
                 ret = OrderedDict()
@@ -362,7 +373,7 @@ class DynamicField(DocumentField):
             if self.go_deeper():
                 cls = type(value)
                 if type(cls) not in self.serializers:
-                    self.serializers[cls] = self.get_subfields(cls)
+                    self.serializers[cls] = self.get_document_subfields(cls)
                 fields = self.serializers[cls]
 
                 ret = OrderedDict()
@@ -408,7 +419,7 @@ class DictField(DocumentField):
                     item = DeReference()([item])[0]
                     cls = item.__class__
                     if type(cls) not in self.serializers:
-                        self.serializers[cls] = self.get_subfields(cls)
+                        self.serializers[cls] = self.get_document_subfields(cls)
                     fields = self.serializers[cls]
 
                     sub_ret = OrderedDict()
@@ -428,7 +439,7 @@ class DictField(DocumentField):
 
                     #get serializer fields from cache, or make them if needed.
                     if type(cls) not in self.serializers:
-                        self.serializers[cls] = self.get_subfields(cls)
+                        self.serializers[cls] = self.get_document_subfields(cls)
                     fields = self.serializers[cls]
 
                     #iterate.
