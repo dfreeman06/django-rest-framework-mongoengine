@@ -9,15 +9,14 @@ from django.forms import widgets
 from django.core.exceptions import ImproperlyConfigured
 
 from collections import OrderedDict
+import inspect
 
 from rest_framework import serializers
 from rest_framework import fields as drf_fields
 from rest_framework.fields import SkipField
 from rest_framework_mongoengine.utils import get_field_info, FieldInfo
 from rest_framework_mongoengine.fields import (ReferenceField, ListField, EmbeddedDocumentField, DynamicField,
-                                               ObjectIdField, DocumentField, BinaryField, BaseGeoField, DictField, MapField,
-                                               get_field_mapping, is_drfme_field)
-from rest_framework_mongoengine.fields import ME_FIELD_MAPPING
+                                               ObjectIdField, DocumentField, BinaryField, BaseGeoField, DictField, MapField)
 import copy
 
 
@@ -162,11 +161,40 @@ class DocumentSerializer(serializers.ModelSerializer):
     }
 
     field_mapping.update(_drfme_field_mapping)
+    embedded_document_serializer_fields = []
 
     def get_field_mapping(self, field):
-        return get_field_mapping(field)
+        #given a field, look up the proper default drf or drf-me field
 
-    embedded_document_serializer_fields = []
+        #convert to class, if we're passed an instance, as above.
+        if not isinstance(field, type):
+            field = type(field)
+
+        for cls in inspect.getmro(field):
+            if cls in self.field_mapping:
+                return self.field_mapping[cls]
+        return None
+
+    def is_drfme_field(self, field):
+        """
+        :param field: Model field instance (or class)
+        :return: True if field maps to a subclass of DocumentField, otherwise returns False.
+        """
+
+        #We will need the field class to look it up, so make sure we weren't passed one initially
+        #and convert it if needed.
+        if not isinstance(field, type):
+            field = type(field)
+
+        #if this is a key in DRFME_FIELD_MAPPING, return True
+        if field in self._drfme_field_mapping:
+            return True
+        elif set(inspect.getmro(field)).intersection(self._drfme_field_mapping.keys()):
+            #if the set of field's parent classes has an intersection with the keys in DRFME_FIELD_MAPPING
+            #i.e. One of our parent classes is a type that needs handling with a DocumentField
+            return True
+        return False
+
 
     def get_validators(self):
         validators = getattr(getattr(self, 'Meta', None), 'validators', [])
@@ -181,7 +209,7 @@ class DocumentSerializer(serializers.ModelSerializer):
         #kwargs to pass to all drfme fields
         #this includes lists, dicts, embedded documents, etc
         #depth included for flow control during recursive serialization.
-        if is_drfme_field(model_field):
+        if self.is_drfme_field(model_field):
             kwargs['model_field'] = model_field
             kwargs['depth'] = getattr(self.Meta, 'depth', self.MAX_RECURSION_DEPTH)
 
@@ -305,7 +333,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             elif field_name in info.fields_and_pk:
                 # Create regular model fields.
                 model_field = info.fields_and_pk[field_name]
-                field_cls = get_field_mapping(model_field)
+                field_cls = self.get_field_mapping(model_field)
                 if field_cls is None:
                     raise KeyError('%s is not supported, yet. Please open a ticket regarding '
                                    'this issue and have it fixed asap.\n'

@@ -66,7 +66,7 @@ class DocumentField(serializers.Field):
 
     def get_fields(self):
         #handle dynamic/dict fields
-        return {}
+        raise NotImplementedError("Fields subclassing DocumentField need to implement get_fields.")
 
     def get_document_subfields(self, model):
         model_fields = model._fields
@@ -88,7 +88,7 @@ class DocumentField(serializers.Field):
         #kwargs to pass to all drfme fields
         #this includes lists, dicts, embedded documents, etc
         #depth included for flow control during recursive serialization.
-        if is_drfme_field(subfield):
+        if self.is_drfme_field(subfield):
             kwargs['model_field'] = subfield
             kwargs['depth'] = self.depth - 1
 
@@ -137,6 +137,18 @@ class DocumentField(serializers.Field):
         )
 
         return self.parent.get_field_mapping(field)
+
+    def is_drfme_field(self, field):
+        #query parent to get field mapping.
+        #Since this is implemented in the serializer and in DocumentField
+        #we'll pass this up the chain until we get to the serializer, where it can be easily configured.
+        assert hasattr(self, 'parent'), (
+            "%s Field has no parent attribute"
+            "field.bind probably did not get called." %
+            (self.field_name)
+        )
+
+        return self.parent.is_drfme_field(field)
 
     def to_internal_value(self, data):
         return self.model_field.to_python(data)
@@ -302,17 +314,11 @@ class EmbeddedDocumentField(DocumentField):
         return {}
 
     def get_attribute(self, instance):
-        #return dict of whatever our fields pass back to us..
-        ret = OrderedDict()
-
         if self.go_deeper():
-            for field_name in self.fields:
-                field = self.fields[field_name]
-                ret[field_name] = field.get_attribute(instance[self.source])
-            return ret
+            return instance[self.source]
 
         else:
-            return ret #"something else here?"
+            raise Exception("SerializerField %s ran out of depth serializing instance: %s, on field %s" % (self, instance, self.model_field.field_name))
 
 
     def to_representation(self, value):
@@ -329,7 +335,7 @@ class EmbeddedDocumentField(DocumentField):
             return ret
         else:
             #should probably have a proper depth-specific error.
-            raise Exception("Ran out of depth serializing %s." % self.model_field.document_type)
+            raise Exception("SerializerField %s ran out of depth serializing instance: %s, on field %s" % (self, value, self.model_field.field_name))
 
     def to_internal_value(self, data):
         return self.model_field.to_python(data)
@@ -498,66 +504,3 @@ class BinaryField(DocumentField):
 class BaseGeoField(DocumentField):
 
     type_label = 'BaseGeoField'
-
-def is_drfme_field(field):
-    """
-    :param field: Model field instance (or class)
-    :return: True if field maps to a subclass of DocumentField, otherwise returns False.
-    """
-
-    #We will need the field class to look it up, so make sure we weren't passed one initially
-    #and convert it if needed.
-    if not isinstance(field, type):
-        field = type(field)
-
-    #if this is a key in DRFME_FIELD_MAPPING, return True
-    if field in DRFME_FIELD_MAPPING:
-        return True
-    elif set(inspect.getmro(field)).intersection(DRFME_FIELD_MAPPING.keys()):
-        #if the set of field's parent classes has an intersection with the keys in DRFME_FIELD_MAPPING
-        #i.e. One of our parent classes is a type that needs handling with a DocumentField
-        return True
-    return False
-
-def get_field_mapping(field):
-    #given a field, look up the proper default drf or drf-me field
-
-    #convert to class, if we're passed an instance, as above.
-    if not isinstance(field, type):
-        field = type(field)
-
-    for cls in inspect.getmro(field):
-        if cls in ME_FIELD_MAPPING:
-            return ME_FIELD_MAPPING[cls]
-    return None
-
-DRFME_FIELD_MAPPING = {
-    me_fields.ObjectIdField: ObjectIdField,
-    me_fields.ReferenceField: ReferenceField,
-    me_fields.ListField: ListField,
-    me_fields.EmbeddedDocumentField: EmbeddedDocumentField,
-    me_fields.DynamicField: DynamicField,
-    me_fields.DictField: DictField,
-    me_fields.MapField: MapField,
-    me_fields.BinaryField: BinaryField,
-    me_fields.GeoPointField: BaseGeoField,
-    me_fields.PointField: BaseGeoField,
-    me_fields.PolygonField: BaseGeoField,
-    me_fields.LineStringField: BaseGeoField,
-}
-
-ME_FIELD_MAPPING = {
-        me_fields.FloatField: drf_fields.FloatField,
-        me_fields.IntField: drf_fields.IntegerField,
-        me_fields.DateTimeField: drf_fields.DateTimeField,
-        me_fields.EmailField: drf_fields.EmailField,
-        me_fields.URLField: drf_fields.URLField,
-        me_fields.StringField: drf_fields.CharField,
-        me_fields.BooleanField: drf_fields.BooleanField,
-        me_fields.FileField: drf_fields.FileField,
-        me_fields.ImageField: drf_fields.ImageField,
-        me_fields.UUIDField: drf_fields.CharField,
-        me_fields.DecimalField: drf_fields.DecimalField
-    }
-
-ME_FIELD_MAPPING.update(DRFME_FIELD_MAPPING)
