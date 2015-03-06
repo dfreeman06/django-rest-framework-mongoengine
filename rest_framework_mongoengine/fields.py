@@ -76,14 +76,17 @@ class DocumentField(serializers.Field):
         return fields
 
     def get_subfield(self, model_field):
-        kwargs = self.get_subfield_kwargs(model_field)
+        kwargs = self.get_field_kwargs(model_field)
         return self.get_field_mapping(model_field)(**kwargs)
 
-    def get_subfield_kwargs(self, subfield):
+    def get_base_kwargs(self):
+        return self.parent.get_base_kwargs()
+
+    def get_field_kwargs(self, subfield):
         """
         Get kwargs that will be used for validation/serialization
         """
-        kwargs = {}
+        kwargs = self.parent.get_base_kwargs()
 
         #kwargs to pass to all drfme fields
         #this includes lists, dicts, embedded documents, etc
@@ -335,7 +338,7 @@ class EmbeddedDocumentField(DocumentField):
             return ret
         else:
             #should probably have a proper depth-specific error.
-            raise Exception("SerializerField %s ran out of depth serializing instance: %s, on field %s" % (self, value, self.model_field.field_name))
+            raise Exception("SerializerField %s ran out of depth serializing instance: %s, on field %s" % (self, value, self.model_field.name))
 
     def to_internal_value(self, data):
         return self.model_field.to_python(data)
@@ -364,7 +367,9 @@ class DynamicField(DocumentField):
             if self.go_deeper(is_ref=True):
                 cls = type(value)
                 if type(cls) not in self.serializers:
-                    self.serializers[cls] = self.get_document_subfields(cls)
+                    self.serializers[cls] = BindingDict(self)
+                    for key, val in self.get_document_subfields(cls).items():
+                        self.serializers[cls][key] = val
                 fields = self.serializers[cls]
 
                 ret = OrderedDict()
@@ -378,8 +383,11 @@ class DynamicField(DocumentField):
         elif isinstance(value, EmbeddedDocument):
             if self.go_deeper():
                 cls = type(value)
+
                 if type(cls) not in self.serializers:
-                    self.serializers[cls] = self.get_document_subfields(cls)
+                    self.serializers[cls] = BindingDict(self)
+                    for key, val in self.get_document_subfields(cls).items():
+                        self.serializers[cls][key] = val
                 fields = self.serializers[cls]
 
                 ret = OrderedDict()
@@ -459,6 +467,7 @@ class DictField(DocumentField):
                     #no depth, just print the something representing the EmbeddedDocument.
                     cls = item['_cls']
                     ret[key] = "Embedded Document " + cls + " (out of depth)"
+                    #TODO - raise an error here instead.
 
             else:
                 #not a document or embedded document, just return the value.

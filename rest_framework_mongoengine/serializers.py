@@ -195,6 +195,9 @@ class DocumentSerializer(serializers.ModelSerializer):
             return True
         return False
 
+    def get_base_kwargs(self):
+        return {}
+
 
     def get_validators(self):
         validators = getattr(getattr(self, 'Meta', None), 'validators', [])
