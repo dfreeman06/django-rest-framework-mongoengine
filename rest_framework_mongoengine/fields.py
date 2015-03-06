@@ -433,7 +433,9 @@ class DictField(DocumentField):
                     item = DeReference()([item])[0]
                     cls = item.__class__
                     if type(cls) not in self.serializers:
-                        self.serializers[cls] = self.get_document_subfields(cls)
+                        self.serializers[cls] = BindingDict(self)
+                        for key, val in self.get_document_subfields(cls).items():
+                            self.serializers[cls][key] = val
                     fields = self.serializers[cls]
 
                     sub_ret = OrderedDict()
@@ -453,8 +455,10 @@ class DictField(DocumentField):
 
                     #get serializer fields from cache, or make them if needed.
                     if type(cls) not in self.serializers:
-                        self.serializers[cls] = self.get_document_subfields(cls)
-                    fields = self.serializers[cls]
+                        self.serializers[cls] = BindingDict(self)
+                        for key, val in self.get_document_subfields(cls).items():
+                            self.serializers[cls][key] = val
+                        fields = self.serializers[cls]
 
                     #iterate.
                     sub_ret = OrderedDict()
