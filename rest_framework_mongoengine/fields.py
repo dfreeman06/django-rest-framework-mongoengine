@@ -361,7 +361,7 @@ class DynamicField(DocumentField):
 
     def to_representation(self, value):
 
-        if isinstance(value, Document):
+        if isinstance(value, (DBRef, Document)):
             #Will not get DBRefs thanks to how MongoEngine handles DynamicFields
             #but, respect depth anyways.
             if self.go_deeper(is_ref=True):
@@ -399,8 +399,19 @@ class DynamicField(DocumentField):
                 #out of depth
                 return "%s Object: Out of Depth" % type(value).__name__
 
+        elif isinstance(value, ObjectId):
+            return smart_str(value)
+
+        elif isinstance(value, list):
+            #list of things.
+            #dyn = DynamicField(**self.get_field_kwargs(self.model_field))
+            return [self.to_representation(i) for i in value]
+
         else:
             #some other type of value.
+            if isinstance(value, numbers.Number):
+                return value
+
             return value
 
 
@@ -473,12 +484,19 @@ class DictField(DocumentField):
                     ret[key] = "Embedded Document " + cls + " (out of depth)"
                     #TODO - raise an error here instead.
 
+            elif isinstance(value, ObjectId):
+                ret[key] = smart_str(value)
+
+            elif isinstance(item, list):
+                #list of things.
+                dyn = DynamicField(**self.get_field_kwargs(self.model_field))
+                ret[key] = [dyn.to_representation(i) for i in item]
             else:
                 #not a document or embedded document, just return the value.
-                ret[key] = item
+                if isinstance(item, numbers.Number):
+                    ret[key] = item
+                ret[key] = smart_str(item)
 
-        #if len(ret):
-        #    raise undead
         return ret
 
     def to_internal_value(self, data):
