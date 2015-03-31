@@ -16,7 +16,7 @@ from rest_framework import fields as drf_fields
 from rest_framework.fields import SkipField
 from rest_framework_mongoengine.utils import get_field_info, FieldInfo
 from rest_framework_mongoengine.fields import (ReferenceField, ListField, EmbeddedDocumentField, DynamicField,
-                                               ObjectIdField, DocumentField, BinaryField, BaseGeoField, DictField, MapField)
+                                               ObjectIdField, DocumentField, BinaryField, BaseGeoField, DictField, MapField, FileField)
 import copy
 
 
@@ -139,7 +139,6 @@ class DocumentSerializer(serializers.ModelSerializer):
         me_fields.URLField: drf_fields.URLField,
         me_fields.StringField: drf_fields.CharField,
         me_fields.BooleanField: drf_fields.BooleanField,
-        me_fields.FileField: drf_fields.FileField,
         me_fields.ImageField: drf_fields.ImageField,
         me_fields.UUIDField: drf_fields.CharField,
         me_fields.DecimalField: drf_fields.DecimalField
@@ -158,6 +157,7 @@ class DocumentSerializer(serializers.ModelSerializer):
         me_fields.PointField: BaseGeoField,
         me_fields.PolygonField: BaseGeoField,
         me_fields.LineStringField: BaseGeoField,
+        me_fields.FileField: FileField,
     }
 
     field_mapping.update(_drfme_field_mapping)

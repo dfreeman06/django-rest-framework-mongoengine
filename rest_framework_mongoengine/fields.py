@@ -513,6 +513,17 @@ class ObjectIdField(DocumentField):
     def to_internal_value(self, data):
         return ObjectId(data)
 
+class FileField(DocumentField):
+    """
+    For now, just print the grid_id properly.
+    Allowing uploads of files via the serializer will require a bit more work.
+    """
+    type_label = 'FileField'
+
+    def to_representation(self, value):
+        gid = value.grid_id
+
+        return smart_str(value.grid_id)
 
 class BinaryField(DocumentField):
 
