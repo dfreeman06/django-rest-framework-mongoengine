@@ -491,11 +491,11 @@ class DictField(DocumentField):
                 #list of things.
                 dyn = DynamicField(**self.get_field_kwargs(self.model_field))
                 ret[key] = [dyn.to_representation(i) for i in item]
+            elif isinstance(item, numbers.Number) or isinstance(item, bool):
+                #number/bool, just return the value.
+                ret[key] = item
             else:
-                #not a document or embedded document, just return the value.
-                if isinstance(item, numbers.Number) or isinstance(item, bool):
-                    ret[key] = item
-
+                #stringify
                 ret[key] = smart_str(item)
 
         return ret
