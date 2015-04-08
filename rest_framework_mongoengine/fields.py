@@ -493,8 +493,9 @@ class DictField(DocumentField):
                 ret[key] = [dyn.to_representation(i) for i in item]
             else:
                 #not a document or embedded document, just return the value.
-                if isinstance(item, numbers.Number):
+                if isinstance(item, numbers.Number) or isinstance(item, bool):
                     ret[key] = item
+
                 ret[key] = smart_str(item)
 
         return ret
