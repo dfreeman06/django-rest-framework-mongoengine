@@ -262,10 +262,9 @@ class DocumentSerializer(serializers.ModelSerializer):
         fields = getattr(self.Meta, 'fields', None) #explicit list of fields
         exclude = getattr(self.Meta, 'exclude', None) #list of fields to exclude
         depth = getattr(self.Meta, 'depth', 0) #depth to crawl to
-        extra_kwargs = getattr(self.Meta, 'extra_kwargs', {}) #extra kwargs.
 
         #format extra kwargs
-        extra_kwargs = self._include_additional_options(extra_kwargs)
+        extra_kwargs = self.get_extra_kwargs()
 
         #check fields and exclude, make sure they didn't do anything stupid
         if fields and not isinstance(fields, (list, tuple)):
@@ -285,17 +284,7 @@ class DocumentSerializer(serializers.ModelSerializer):
         # # Retrieve metadata about fields & relationships on the model class.
         info = self.get_field_info(model)
 
-        # Use the default set of field names if none is supplied explicitly.
-        if fields is None:
-            #no fields set, so define the defaults.
-            fields = self._get_default_field_names(declared_fields, info)
-
-            #if serializer lists fields to exclude, drop them from the list.
-            if exclude is not None:
-                for field_name in exclude:
-                    if field_name in fields:
-                        fields.remove(field_name)
-
+        fields = self.get_default_field_names(declared_fields, info)
 
         # Determine the set of model fields, and the fields that they map to.
         # We actually only need this to deal with the slightly awkward case
