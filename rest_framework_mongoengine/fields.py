@@ -24,7 +24,7 @@ from rest_framework.fields import get_attribute, SkipField, empty
 from rest_framework.utils import html
 from rest_framework.utils.serializer_helpers import BindingDict
 
-from rest_framework_mongoengine.utils import get_field_info
+from rest_framework_mongoengine.utils import get_field_info, PolymorphicChainMap
 
 class DocumentField(serializers.Field):
     """
@@ -343,6 +343,33 @@ class EmbeddedDocumentField(DocumentField):
     def to_internal_value(self, data):
         return self.model_field.to_python(data)
 
+class PolymorphicEmbeddedDocumentField(EmbeddedDocumentField):
+    def bind(self, field_name, parent):
+        super(PolymorphicEmbeddedDocumentField, self).bind(field_name, parent)
+        self.chainmap = PolymorphicChainMap(self, self.fields, self.document_type)
+
+
+    def to_representation(self, value):
+        cls = value.__class__
+        fields = self.chainmap[cls]
+
+        if value is None:
+            return None
+        elif self.go_deeper():
+            #get model's fields
+            ret = OrderedDict()
+            for field_name in fields:
+                if value._data[field_name] is None:
+                    ret[field_name] = None
+                else:
+                    ret[field_name] = fields[field_name].to_representation(value._data[field_name])
+            return ret
+        else:
+            #should probably have a proper depth-specific error.
+            raise Exception("SerializerField %s ran out of depth serializing instance: %s, on field %s" % (self, value, self.model_field.name))
+
+
+
 
 class DynamicField(DocumentField):
 
@@ -507,6 +534,10 @@ class DictField(DocumentField):
 class ObjectIdField(DocumentField):
 
     type_label = 'ObjectIdField'
+
+    def get_fields(self):
+        #return fields for all the subfields in this document.
+        return {}
 
     def to_representation(self, value):
         return smart_str(value)

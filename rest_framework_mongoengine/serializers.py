@@ -14,9 +14,9 @@ import inspect
 from rest_framework import serializers
 from rest_framework import fields as drf_fields
 from rest_framework.fields import SkipField
-from rest_framework_mongoengine.utils import get_field_info, FieldInfo
+from rest_framework_mongoengine.utils import get_field_info, FieldInfo, PolymorphicChainMap
 from rest_framework_mongoengine.fields import (ReferenceField, ListField, EmbeddedDocumentField, DynamicField,
-                                               ObjectIdField, DocumentField, BinaryField, BaseGeoField, DictField, MapField, FileField)
+                                               ObjectIdField, DocumentField, BinaryField, BaseGeoField, DictField, MapField, FileField, PolymorphicEmbeddedDocumentField)
 import copy
 
 
@@ -485,21 +485,13 @@ class DocumentSerializer(serializers.ModelSerializer):
         return super(DocumentSerializer, self).update(instance, validated_data)
 
 class PolymorphicDocumentSerializer(DocumentSerializer):
+    def __init__(self, *args, **kwargs):
+        self.field_mapping[me_fields.EmbeddedDocumentField] = PolymorphicEmbeddedDocumentField
+        super(PolymorphicDocumentSerializer, self).__init__(*args, **kwargs)
+        self.chainmap = PolymorphicChainMap(self, self.fields)
 
-    def get_field_info(self, model):
 
-        subcls_info = {}
-        for cls in model._subclasses:
-            subcls_info[cls] = get_field_info(get_document(cls))
 
-        ret = get_field_info(model)
-        for cls_info in subcls_info.values():
-            for field in cls_info.fields:
-                if field not in ret.fields:
-                    ret.fields[field] = cls_info.fields[field]
-
-        ret.fields_and_pk.update(ret.fields)
-        return ret
 
     def to_representation(self, instance):
         """
@@ -508,14 +500,15 @@ class PolymorphicDocumentSerializer(DocumentSerializer):
         #instantiate return dict
         ret = OrderedDict()
 
-        #get list of fields from self.fields.values()
-        fields = {}
-        for field_name, field in self.fields.iteritems():
-            if not field.write_only:
-                fields[field_name] = field
 
-        for field_name in fields:
-            field = fields[field_name]
+        #get list of fields from self.fields.values()
+        cls = instance.__class__
+        fields = self.chainmap[cls]
+
+        fields = {name: field for name, field in fields.items() if not field.write_only}
+        d = {name: (field.source, field.source_attrs) for name, field in fields.items()}
+
+        for field_name, field in fields.items():
             if field_name in self._declared_fields or field.source in instance._fields:
                 try:
                     #get attribute from field
