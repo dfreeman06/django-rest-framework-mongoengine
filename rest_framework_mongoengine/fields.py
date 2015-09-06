@@ -20,6 +20,7 @@ from collections import OrderedDict
 
 from mongoengine import fields as me_fields
 from rest_framework import fields as drf_fields
+from rest_framework.relations import HyperlinkedIdentityField
 from rest_framework.fields import get_attribute, SkipField, empty
 from rest_framework.utils import html
 from rest_framework.utils.serializer_helpers import BindingDict
@@ -544,6 +545,36 @@ class ObjectIdField(DocumentField):
 
     def to_internal_value(self, data):
         return ObjectId(data)
+
+class HyperlinkedDocumentIdentityField(HyperlinkedIdentityField):
+
+    view_name_pattern = "%s-detail"
+
+    def __init__(self, *args, **kwargs):
+        pattern = kwargs.pop('view_name_pattern', None)
+        if pattern:
+            self.view_name_pattern = pattern
+
+        if 'lookup_field' not in kwargs.keys():
+            kwargs['lookup_field'] = 'id'
+
+        cleanup = False
+        if 'view_name' not in kwargs.keys():
+            #fake out the parent class so it doesn't break.
+            kwargs['view_name'] = ''
+            cleanup = True
+
+        super(HyperlinkedDocumentIdentityField, self).__init__(*args, **kwargs)
+
+        if cleanup:
+            self.view_name = None
+
+
+    def to_representation(self, value):
+        if self.view_name is None:
+            self.view_name = self.view_name_pattern % value.__class__.__name__.lower()
+
+        return super(HyperlinkedDocumentIdentityField, self).to_representation(value)
 
 class FileField(DocumentField):
     """
