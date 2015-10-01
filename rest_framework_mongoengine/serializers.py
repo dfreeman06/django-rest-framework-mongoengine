@@ -149,7 +149,7 @@ class DocumentSerializer(serializers.ModelSerializer):
         me_fields.ObjectIdField: ObjectIdField,
         me_fields.ReferenceField: ReferenceField,
         me_fields.ListField: ListField,
-        me_fields.EmbeddedDocumentField: EmbeddedDocumentField,
+        me_fields.EmbeddedDocumentField: PolymorphicEmbeddedDocumentField,
         me_fields.DynamicField: DynamicField,
         me_fields.DictField: DictField,
         me_fields.MapField: MapField,
@@ -501,6 +501,19 @@ class ChainableDocumentSerializer(DocumentSerializer):
         else:
             raise Exception("Don't do that, yo.")
 
+    def get_serializer(self, kls):
+        #if no serializers have been registered for us to use, just return self
+        if self.__class__ not in subclass_serializers.keys():
+            return super(ChainableDocumentSerializer, self)
+
+        for klz in inspect.getmro(kls):
+            if klz in subclass_serializers[self.__class__].keys():
+                serializer = subclass_serializers[self.__class__][klz]
+                serializer._context = self._context
+                return serializer
+
+        #if a better serializer is not found, return self as default
+        return super(ChainableDocumentSerializer, self)
 
 
     def to_internal_value(self, data):
@@ -517,29 +530,28 @@ class ChainableDocumentSerializer(DocumentSerializer):
 
         if data['_cls']:
             cls = get_document(data['_cls'])
-            if cls is not self.Meta.model and issubclass(cls, self.Meta.model) and \
-                    self.__class__ in subclass_serializers.keys() and cls in subclass_serializers[self.__class__].keys():
-                #must be subclass and not instance of the current serializer
-                return subclass_serializers[self.__class__][cls].to_internal_value(data)
+        else:
+            cls = self.Meta.model
 
-        return super(ChainableDocumentSerializer, self).to_internal_value(data)
+        return self.get_serializer(cls).to_internal_value(data)
 
     def to_representation(self, instance):
         """
         Object instance -> Dict of primitive datatypes.
         """
-        #instantiate return dict
-        ret = OrderedDict()
 
-        #get list of fields from self.fields.values()
+        #get class of instance
         cls = instance.__class__
+        #find subclass serializer if one exists
+        return self.get_serializer(cls).to_representation(instance)
 
-        if cls is not self.Meta.model and \
-                self.__class__ in subclass_serializers.keys() and cls in subclass_serializers[self.__class__].keys():
+    def create(self, validated_data):
+        if validated_data['_class_name']:
+            cls = get_document(validated_data['_class_name'])
+        else:
+            cls = self.Meta.model
 
-            return subclass_serializers[self.__class__][cls].to_representation(instance)
-
-        return super(ChainableDocumentSerializer, self).to_representation(instance)
+        return self.get_serializer(cls).create(validated_data)
 
 
 class PolymorphicDocumentSerializer(DocumentSerializer):
