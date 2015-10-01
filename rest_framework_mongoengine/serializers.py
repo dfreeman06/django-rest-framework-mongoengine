@@ -14,6 +14,7 @@ import inspect
 from rest_framework import serializers
 from rest_framework import fields as drf_fields
 from rest_framework.fields import SkipField
+from rest_framework.settings import api_settings
 from rest_framework_mongoengine.utils import get_field_info, FieldInfo, PolymorphicChainMap
 from rest_framework_mongoengine.fields import (ReferenceField, ListField, EmbeddedDocumentField, DynamicField,
                                                ObjectIdField, DocumentField, BinaryField, BaseGeoField, DictField, MapField, FileField, PolymorphicEmbeddedDocumentField)
@@ -484,13 +485,116 @@ class DocumentSerializer(serializers.ModelSerializer):
 
         return super(DocumentSerializer, self).update(instance, validated_data)
 
+
+subclass_serializers = {}
+
+class ChainableDocumentSerializer(DocumentSerializer):
+
+    @classmethod
+    def register_serializer(cls, serializer):
+        if cls not in subclass_serializers.keys():
+            subclass_serializers[cls] = {}
+
+        kls = serializer.Meta.model
+        if kls is not cls.Meta.model and issubclass(kls, cls.Meta.model):
+            subclass_serializers[cls][kls] = serializer()
+        else:
+            raise Exception("Don't do that, yo.")
+
+
+
+    def to_internal_value(self, data):
+        """
+        Dict of native values <- Dict of primitive datatypes.
+        """
+        if not isinstance(data, dict):
+            message = self.error_messages['invalid'].format(
+                datatype=type(data).__name__
+            )
+            raise drf_fields.ValidationError({
+                api_settings.NON_FIELD_ERRORS_KEY: [message]
+            })
+
+        if data['_cls']:
+            cls = get_document(data['_cls'])
+            if cls is not self.Meta.model and issubclass(cls, self.Meta.model) and \
+                    self.__class__ in subclass_serializers.keys() and cls in subclass_serializers[self.__class__].keys():
+                #must be subclass and not instance of the current serializer
+                return subclass_serializers[self.__class__][cls].to_internal_value(data)
+
+        return super(ChainableDocumentSerializer, self).to_internal_value(data)
+
+    def to_representation(self, instance):
+        """
+        Object instance -> Dict of primitive datatypes.
+        """
+        #instantiate return dict
+        ret = OrderedDict()
+
+        #get list of fields from self.fields.values()
+        cls = instance.__class__
+
+        if cls is not self.Meta.model and \
+                self.__class__ in subclass_serializers.keys() and cls in subclass_serializers[self.__class__].keys():
+
+            return subclass_serializers[self.__class__][cls].to_representation(instance)
+
+        return super(ChainableDocumentSerializer, self).to_representation(instance)
+
+
 class PolymorphicDocumentSerializer(DocumentSerializer):
     def __init__(self, *args, **kwargs):
         self.field_mapping[me_fields.EmbeddedDocumentField] = PolymorphicEmbeddedDocumentField
         super(PolymorphicDocumentSerializer, self).__init__(*args, **kwargs)
         self.chainmap = PolymorphicChainMap(self, self.fields)
 
+    def to_internal_value(self, data):
+        """
+        Dict of native values <- Dict of primitive datatypes.
+        """
+        if not isinstance(data, dict):
+            message = self.error_messages['invalid'].format(
+                datatype=type(data).__name__
+            )
+            raise drf_fields.ValidationError({
+                api_settings.NON_FIELD_ERRORS_KEY: [message]
+            })
 
+        ret = OrderedDict()
+        errors = OrderedDict()
+
+        if data['_cls']:
+            cls = get_document(data['_cls'])
+            if not issubclass(cls, self.Meta.model):
+                #not playing the 'pass anything in, and we'll construct it for you' game
+                cls = self.Meta.model
+        else:
+            cls = self.Meta.model
+
+        fields = self.chainmap[cls]
+
+        fields = [field for name, field in fields.items() if not field.read_only]
+
+        for field in fields:
+            validate_method = getattr(self, 'validate_' + field.field_name, None)
+            primitive_value = field.get_value(data)
+            try:
+                validated_value = field.run_validation(primitive_value)
+                if validate_method is not None:
+                    validated_value = validate_method(validated_value)
+            except drf_fields.ValidationError as exc:
+                errors[field.field_name] = exc.detail
+            except drf_fields.DjangoValidationError as exc:
+                errors[field.field_name] = list(exc.messages)
+            except SkipField:
+                pass
+            else:
+                drf_fields.set_value(ret, field.source_attrs, validated_value)
+
+        if errors:
+            raise drf_fields.ValidationError(errors)
+
+        return ret
 
 
     def to_representation(self, instance):
