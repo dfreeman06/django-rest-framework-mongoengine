@@ -497,7 +497,7 @@ class ChainableDocumentSerializer(DocumentSerializer):
 
         kls = serializer.Meta.model
         if kls is not cls.Meta.model and issubclass(kls, cls.Meta.model):
-            subclass_serializers[cls][kls] = serializer()
+            subclass_serializers[cls][kls] = serializer
         else:
             raise Exception("Don't do that, yo.")
 
@@ -509,7 +509,10 @@ class ChainableDocumentSerializer(DocumentSerializer):
         for klz in inspect.getmro(kls):
             if klz in subclass_serializers[self.__class__].keys():
                 serializer = subclass_serializers[self.__class__][klz]
-                serializer._context = self._context
+                if type(serializer) is serializers.SerializerMetaclass:
+                    #instantiate now, since there's a context we can pass along.
+                    serializer = serializer(context=self._context)
+                    subclass_serializers[self.__class__][klz] = serializer
                 return serializer
 
         #if a better serializer is not found, return self as default
