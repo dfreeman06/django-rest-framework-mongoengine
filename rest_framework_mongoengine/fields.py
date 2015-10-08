@@ -347,7 +347,7 @@ class EmbeddedDocumentField(DocumentField):
 class PolymorphicEmbeddedDocumentField(EmbeddedDocumentField):
     def bind(self, field_name, parent):
         super(PolymorphicEmbeddedDocumentField, self).bind(field_name, parent)
-        self.chainmap = PolymorphicChainMap(self, self.fields, self.document_type)
+        self.chainmap = PolymorphicChainMap(parent, self.fields, self.document_type)
 
 
     def to_representation(self, value):
