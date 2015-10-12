@@ -100,16 +100,20 @@ class PolymorphicChainMap(object):
         self.serializer = serializer
         if base_fields:
             self.base_dict = base_fields
-        else:
-            self.base_dict = BindingDict(serializer)
-            for key, field in self.klass._fields.items():
-                self.base_dict[key] = serializer.get_field_mapping(field)(**serializer.get_field_kwargs(field))
-
-        self.lookup[self.klass] = ChainMap(self.base_dict)
+            self.lookup[self.klass] = ChainMap(self.base_dict)
+        #else:
+        #    self.base_dict = BindingDict(serializer)
+        #    for key, field in self.klass._fields.items():
+        #        self.base_dict[key] = serializer.get_field_mapping(field)(**serializer.get_field_kwargs(field))
 
     def __getitem__(self, item):
         if not isinstance(item, type):
             item = item.__class__
+
+        #if we haven't initialized the base_dict, use the serializer's field property.
+        if not hasattr(self, 'base_dict'):
+            self.base_dict = self.serializer.fields
+            self.lookup[self.klass] = ChainMap(self.base_dict)
 
         #see if we've generated this chainmap yet.
         if item in self.lookup:

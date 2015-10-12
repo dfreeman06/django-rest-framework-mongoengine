@@ -309,9 +309,12 @@ class EmbeddedDocumentField(DocumentField):
 
     type_label = 'EmbeddedDocumentField'
 
-    def get_fields(self):
+    def __init__(self, *args, **kwargs):
+        super(EmbeddedDocumentField, self).__init__(*args, **kwargs)
+
         self.document_type = self.model_field.document_type
 
+    def get_fields(self):
         #if we need to recurse deeper, build a list of the embedded document's fields.
         if self.go_deeper():
             return self.get_document_subfields(self.document_type)
@@ -345,9 +348,9 @@ class EmbeddedDocumentField(DocumentField):
         return self.model_field.to_python(data)
 
 class PolymorphicEmbeddedDocumentField(EmbeddedDocumentField):
-    def bind(self, field_name, parent):
-        super(PolymorphicEmbeddedDocumentField, self).bind(field_name, parent)
-        self.chainmap = PolymorphicChainMap(parent, self.fields, self.document_type)
+    def __init__(self, *args, **kwargs):
+        super(PolymorphicEmbeddedDocumentField, self).__init__(*args, **kwargs)
+        self.chainmap = PolymorphicChainMap(self, None, self.document_type)
 
 
     def to_representation(self, value):
@@ -368,8 +371,6 @@ class PolymorphicEmbeddedDocumentField(EmbeddedDocumentField):
         else:
             #should probably have a proper depth-specific error.
             raise Exception("SerializerField %s ran out of depth serializing instance: %s, on field %s" % (self, value, self.model_field.name))
-
-
 
 
 class DynamicField(DocumentField):
