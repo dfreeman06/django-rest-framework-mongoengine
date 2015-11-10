@@ -3,11 +3,12 @@ __author__ = 'BryanAke@gmail.com'
 from unittest import TestCase
 from rest_framework_mongoengine.utils import PolymorphicChainMap
 from rest_framework_mongoengine.serializers import PolymorphicDocumentSerializer
+from test_models import Vehicle, Car, Truck, Mileage, FuelMileage
 
 ##tests for PolymorphicChainMap
 class DummySerializer(PolymorphicDocumentSerializer):
     class Meta:
-        model = SpecialWidget
+        model = Vehicle
 
 
 class TestPolymorphicChainMap(TestCase):

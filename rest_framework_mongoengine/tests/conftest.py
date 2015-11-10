@@ -3,7 +3,7 @@ import mongoengine
 def pytest_configure():
     from django.conf import settings
 
-    mongoengine.connect("drfme-test")
+    mongoengine.connect("drfme-test", host="192.168.1.3")
 
     settings.configure(
         DEBUG_PROPAGATE_EXCEPTIONS=True,
