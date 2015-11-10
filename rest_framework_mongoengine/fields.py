@@ -20,6 +20,7 @@ from collections import OrderedDict
 
 from mongoengine import fields as me_fields
 from rest_framework import fields as drf_fields
+from rest_framework.relations import HyperlinkedIdentityField
 from rest_framework.fields import get_attribute, SkipField, empty
 from rest_framework.utils import html
 from rest_framework.utils.serializer_helpers import BindingDict
@@ -308,9 +309,12 @@ class EmbeddedDocumentField(DocumentField):
 
     type_label = 'EmbeddedDocumentField'
 
-    def get_fields(self):
+    def __init__(self, *args, **kwargs):
+        super(EmbeddedDocumentField, self).__init__(*args, **kwargs)
+
         self.document_type = self.model_field.document_type
 
+    def get_fields(self):
         #if we need to recurse deeper, build a list of the embedded document's fields.
         if self.go_deeper():
             return self.get_document_subfields(self.document_type)
@@ -344,9 +348,9 @@ class EmbeddedDocumentField(DocumentField):
         return self.model_field.to_python(data)
 
 class PolymorphicEmbeddedDocumentField(EmbeddedDocumentField):
-    def bind(self, field_name, parent):
-        super(PolymorphicEmbeddedDocumentField, self).bind(field_name, parent)
-        self.chainmap = PolymorphicChainMap(self, self.fields, self.document_type)
+    def __init__(self, *args, **kwargs):
+        super(PolymorphicEmbeddedDocumentField, self).__init__(*args, **kwargs)
+        self.chainmap = PolymorphicChainMap(self, None, self.document_type)
 
 
     def to_representation(self, value):
@@ -367,8 +371,6 @@ class PolymorphicEmbeddedDocumentField(EmbeddedDocumentField):
         else:
             #should probably have a proper depth-specific error.
             raise Exception("SerializerField %s ran out of depth serializing instance: %s, on field %s" % (self, value, self.model_field.name))
-
-
 
 
 class DynamicField(DocumentField):
@@ -544,6 +546,36 @@ class ObjectIdField(DocumentField):
 
     def to_internal_value(self, data):
         return ObjectId(data)
+
+class HyperlinkedDocumentIdentityField(HyperlinkedIdentityField):
+
+    view_name_pattern = "%s-detail"
+
+    def __init__(self, *args, **kwargs):
+        pattern = kwargs.pop('view_name_pattern', None)
+        if pattern:
+            self.view_name_pattern = pattern
+
+        if 'lookup_field' not in kwargs.keys():
+            kwargs['lookup_field'] = 'id'
+
+        cleanup = False
+        if 'view_name' not in kwargs.keys():
+            #fake out the parent class so it doesn't break.
+            kwargs['view_name'] = ''
+            cleanup = True
+
+        super(HyperlinkedDocumentIdentityField, self).__init__(*args, **kwargs)
+
+        if cleanup:
+            self.view_name = None
+
+
+    def to_representation(self, value):
+        if self.view_name is None:
+            self.view_name = self.view_name_pattern % value.__class__.__name__.lower()
+
+        return super(HyperlinkedDocumentIdentityField, self).to_representation(value)
 
 class FileField(DocumentField):
     """
