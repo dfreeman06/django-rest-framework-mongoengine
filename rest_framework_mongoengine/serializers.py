@@ -531,7 +531,7 @@ class ChainableDocumentSerializer(DocumentSerializer):
                 api_settings.NON_FIELD_ERRORS_KEY: [message]
             })
 
-        if data['_cls']:
+        if data.get('_cls', None):
             cls = get_document(data['_cls'])
         else:
             cls = self.Meta.model
