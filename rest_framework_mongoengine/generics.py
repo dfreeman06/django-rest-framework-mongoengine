@@ -1,7 +1,8 @@
 from rest_framework import mixins
 from rest_framework import generics as drf_generics
-from django.core.exceptions import ImproperlyConfigured
-from mongoengine.django.shortcuts import get_document_or_404
+
+from .django.shortcuts import get_document_or_404
+from mongoengine.queryset.base import BaseQuerySet
 
 
 class GenericAPIView(drf_generics.GenericAPIView):
@@ -12,43 +13,14 @@ class GenericAPIView(drf_generics.GenericAPIView):
 
     def get_queryset(self):
         """
-        Get the list of items for this view.
-        This must be an iterable, and may be a queryset.
-        Defaults to using `self.queryset`.
-
-        You may want to override this if you need to provide different
-        querysets depending on the incoming request.
-
-        (Eg. return a list of items that is specific to the user)
+        Re evaluate queryset, fixes #63
         """
-        if self.queryset is None and self.model is None:
-            raise ImproperlyConfigured("'%s' must define 'queryset' or 'model'"
-                                    % self.__class__.__name__)
+        queryset = super(GenericAPIView, self).get_queryset()
 
-        queryset = None
-        if self.queryset is not None:
-            queryset = self.queryset.clone()
+        if isinstance(queryset, BaseQuerySet):
+            queryset = queryset.all()
 
-        if self.model is not None:
-            if self._auto_dereference:
-                queryset = self.get_serializer().Meta.model.objects
-            else:
-                queryset = self.get_serializer().Meta.model.objects.no_dereference()
         return queryset
-    #
-    # def get_query_kwargs(self):
-    #     """
-    #     Return a dict of kwargs that will be used to build the
-    #     document instance retrieval or to filter querysets.
-    #     """
-    #     query_kwargs = {}
-    #
-    #     serializer = self.get_serializer()
-    #
-    #     for key, value in self.kwargs.items():
-    #         if key in serializer.opts.model._fields and value is not None:
-    #             query_kwargs[key] = value
-    #     return query_kwargs
 
     def get_object(self):
         """

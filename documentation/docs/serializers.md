@@ -42,6 +42,8 @@ class Post(Document):
 ***serializers.py***
 
 ```Python
+from rest_framework_mongoengine.serializers import DocumentSerializer
+
 class PostSerializer(DocumentSerializer):
     class Meta:
         model = Post
@@ -125,6 +127,8 @@ For using `DocumentSerializer` as ***nested serializer***, you have to implement
 ### Sample Implementation
 
 ```Python
+from rest_framework_mongoengine.serializers import DocumentSerializer, EmbeddedDocumentSerializer
+
 class ExtensionSerializer(EmbeddedDocumentSerializer):
     class Meta:
         model = BlogExtension
@@ -145,6 +149,15 @@ class PostSerializer(DocumentSerializer):
         fields = ('id', 'blog', 'author', 'text', 'comments', 'extension')
         depth = 2
 ```
+
+## DynamicDocumentSerializer
+
+Using `DynamicDocuments`, you can save any extra attributes without defining excplicitly on the model. See [Mongoengine docs](https://mongoengine-odm.readthedocs.org/guide/defining-documents.html#dynamic-document-schemas) for further info.
+
+`DynamicDocumentSerializer` is built to support that feature. Any extra key-value combination on `request.data` will be saved. It can be risky to save any data that comes with request, so use use it at your own risk.
+
+>> With great power, comes great responsibility.
+
 
 ## EmbeddedDocumentSerializer
 
