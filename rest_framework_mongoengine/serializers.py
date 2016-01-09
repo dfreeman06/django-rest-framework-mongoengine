@@ -19,6 +19,7 @@ from rest_framework_mongoengine.utils import get_field_info, FieldInfo, Polymorp
 from rest_framework_mongoengine.fields import (ReferenceField, ListField, EmbeddedDocumentField, DynamicField,
                                                ObjectIdField, DocumentField, BinaryField, BaseGeoField, DictField, MapField, FileField, PolymorphicEmbeddedDocumentField)
 import copy
+from mongoengine.errors import NotRegistered
 
 
 def raise_errors_on_nested_writes(method_name, serializer, validated_data):
@@ -549,8 +550,9 @@ class ChainableDocumentSerializer(DocumentSerializer):
         return self.get_serializer(cls).to_representation(instance)
 
     def create(self, validated_data):
-        if validated_data['_class_name']:
-            cls = get_document(validated_data['_class_name'])
+        class_name = validated_data.pop('_class_name', None)
+        if class_name:
+            cls = get_document(class_name)
         else:
             cls = self.Meta.model
 
